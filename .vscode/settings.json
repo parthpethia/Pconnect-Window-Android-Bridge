@@ -1,3 +1,4 @@
 {
-  "cmake.sourceDirectory": "D:/Projects/Pconnect/mobile/pconnect_mobile/linux"
+  "cmake.sourceDirectory": "D:/Projects/Pconnect/mobile/pconnect_mobile/linux",
+  "java.configuration.updateBuildConfiguration": "interactive"
 }

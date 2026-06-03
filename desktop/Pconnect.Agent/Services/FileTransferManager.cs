@@ -10,6 +10,7 @@ internal sealed class FileTransferManager : IDisposable
         public string TempFilePath { get; set; } = string.Empty;
         public FileStream? FileStream { get; set; }
         public int TotalChunks { get; set; }
+        public int ChunkSize { get; set; }
         public HashSet<int> ReceivedChunks { get; set; } = new();
         public long TotalBytes { get; set; }
         public long ReceivedBytes { get; set; }
@@ -48,13 +49,16 @@ internal sealed class FileTransferManager : IDisposable
                 // Ensure Downloads folder exists
                 Directory.CreateDirectory(downloadFolder);
 
+                var chunkSize = 50 * 1024;
                 var transfer = new ActiveTransfer
                 {
                     TempFilePath = tempFile,
-                    TotalChunks = (int)Math.Ceiling((double)size / (50 * 1024)),
+                    TotalChunks = (int)Math.Ceiling((double)size / chunkSize),
+                    ChunkSize = chunkSize,
                     TotalBytes = size,
                     TargetPath = targetPath,
-                    FileStream = new FileStream(tempFile, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024)
+                    // Use ReadWrite so we can seek to write chunks at correct offsets
+                    FileStream = new FileStream(tempFile, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 64 * 1024)
                 };
 
                 _activeTransfers[transferId] = transfer;
@@ -86,7 +90,11 @@ internal sealed class FileTransferManager : IDisposable
                     return false;
                 }
 
+                // Write chunk at the correct offset to handle out-of-order arrival
+                long offset = (long)chunkIndex * transfer.ChunkSize;
+                transfer.FileStream.Seek(offset, SeekOrigin.Begin);
                 transfer.FileStream.Write(data, 0, data.Length);
+                transfer.FileStream.Flush();
                 transfer.ReceivedChunks.Add(chunkIndex);
                 transfer.ReceivedBytes += data.Length;
                 transfer.LastActivity = DateTime.UtcNow;

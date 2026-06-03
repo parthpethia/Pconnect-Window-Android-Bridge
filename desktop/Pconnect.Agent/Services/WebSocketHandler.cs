@@ -68,6 +68,8 @@ internal sealed class WebSocketHandler
         string deviceRole = "admin";
         var authed = false;
         ScreenCaptureService? screenCapture = null;
+        ClipboardMonitor? clipboardMonitor = null;
+        System.Threading.Timer? clipboardPollTimer = null;
         System.Threading.Timer? autoLockTimer = null;
         var sessionNonceBytes = RandomNumberGenerator.GetBytes(16);
         byte[]? integrityKey = null;
@@ -196,6 +198,21 @@ internal sealed class WebSocketHandler
                                 capabilities = AdvertisedCapabilities
                             }, ct);
                             await StartNotificationListenerAsync();
+
+                            // Start clipboard monitoring (PC → phone sync)
+                            clipboardMonitor = new ClipboardMonitor(text =>
+                            {
+                                if (ws.State != WebSocketState.Open || string.IsNullOrEmpty(text)) return;
+                                var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
+                                var json = System.Text.Json.JsonSerializer.Serialize(new
+                                {
+                                    v = 1, type = "clipboardUpdate", data = b64, format = "text/plain", source = "system"
+                                });
+                                var bytes = Encoding.UTF8.GetBytes(json);
+                                try { ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct).GetAwaiter().GetResult(); }
+                                catch { /* connection may have closed */ }
+                            });
+                            clipboardPollTimer = new System.Threading.Timer(_ => clipboardMonitor?.Poll(), null, 500, 500);
                         }
                         else
                         {
@@ -249,6 +266,21 @@ internal sealed class WebSocketHandler
                             capabilities = AdvertisedCapabilities
                         }, ct);
                         await StartNotificationListenerAsync();
+
+                        // Start clipboard monitoring (PC → phone sync)
+                        clipboardMonitor = new ClipboardMonitor(text =>
+                        {
+                            if (ws.State != WebSocketState.Open || string.IsNullOrEmpty(text)) return;
+                            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
+                            var json = System.Text.Json.JsonSerializer.Serialize(new
+                            {
+                                v = 1, type = "clipboardUpdate", data = b64, format = "text/plain", source = "system"
+                            });
+                            var bytes = Encoding.UTF8.GetBytes(json);
+                            try { ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct).GetAwaiter().GetResult(); }
+                            catch { /* connection may have closed */ }
+                        });
+                        clipboardPollTimer = new System.Threading.Timer(_ => clipboardMonitor?.Poll(), null, 500, 500);
                         continue;
                     }
 
@@ -699,7 +731,8 @@ internal sealed class WebSocketHandler
                     case "settingssync":
                     {
                         var autoLock = msg.GetBoolOrDefault("autoLockOnDisconnect", false);
-                        if (!TryConsumeMac($"settingsSync|{deviceId ?? ""}|{autoLock}", out var macErrSt))
+                        // Use lowercase boolean to match Dart's bool.toString() output
+                        if (!TryConsumeMac($"settingsSync|{deviceId ?? ""}|{autoLock.ToString().ToLowerInvariant()}", out var macErrSt))
                         {
                             await SendAsync(ws, new { v = 1, type = "error", message = macErrSt ?? "Command verification failed" }, ct);
                             break;
@@ -734,6 +767,8 @@ internal sealed class WebSocketHandler
         finally
         {
             screenCapture?.Dispose();
+            clipboardPollTimer?.Dispose();
+            clipboardMonitor?.Dispose();
             _notificationListener?.Stop();
             _notificationListener = null;
 

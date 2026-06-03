@@ -4,8 +4,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'tofu_pin_store.dart';
-
-const int kDefaultWssPort = 47824;
+import 'connection.dart' show kDefaultWssPort;
 
 class PcWebSocket {
   /// WSS first (TOFU), then cleartext WS. [wssPort] defaults to [kDefaultWssPort].
@@ -35,10 +34,13 @@ class PcWebSocket {
       }
     }
 
+    // Use dart:io WebSocket.connect() so the connection is properly awaited
+    // and errors are caught. IOWebSocketChannel.connect() returns synchronously
+    // and never throws, leading to false-positive "connected" states.
     try {
-      final ch = IOWebSocketChannel.connect(Uri.parse('ws://$host:$wsPort/ws'));
+      final ws = await WebSocket.connect('ws://$host:$wsPort/ws');
       onTrace?.call('ws', 'ok');
-      return ch;
+      return IOWebSocketChannel(ws);
     } catch (e) {
       onTrace?.call('ws_fail', '$e');
       return null;

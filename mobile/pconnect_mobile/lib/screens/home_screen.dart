@@ -73,8 +73,8 @@ class _HomeScreenState extends State<HomeScreen> {
         title: Text(widget.status.pcName ?? 'Pconnect'),
         actions: [
           IconButton(
-            icon: Icon(connected ? Icons.link : Icons.link_off),
-            tooltip: connected ? 'Connected' : 'Disconnected',
+            icon: Icon(connected ? Icons.link_off_rounded : Icons.link_rounded),
+            tooltip: connected ? 'Disconnect' : 'Connect',
             onPressed: widget.onOpenDiscovery,
           ),
           IconButton(
@@ -135,7 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 label: 'Send File',
                 enabled: connected,
                 onTap: () async {
-                  final result = await FilePicker.platform.pickFiles();
+                  final result = await FilePicker.pickFiles();
                   if (result != null && result.files.single.path != null) {
                     conn?.uploadFile(result.files.single.path!, onProgress: (_) {});
                     if (context.mounted) {

@@ -386,6 +386,8 @@ class PcConnection {
     for (var i = 0; i < 40; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       if (_token != null && _token != tokenBefore) return _token;
+      // Also check if the connection became authenticated via helloAck
+      if (currentStatus.connected && _token != null) return _token;
     }
     return null;
   }

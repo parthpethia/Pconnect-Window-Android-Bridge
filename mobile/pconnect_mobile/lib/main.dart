@@ -14,6 +14,8 @@ import 'screens/remote_control_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/logs_screen.dart';
 import 'screens/discovery_screen.dart';
+import 'screens/welcome_screen.dart';
+import 'screens/connect_screen.dart';
 
 /// Global notification plugin instance used by utils/notifications.dart.
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -25,7 +27,7 @@ Future<void> main() async {
   // Initialize local notifications
   const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
   const initSettings = InitializationSettings(android: androidInit);
-  await flutterLocalNotificationsPlugin.initialize(initSettings);
+  await flutterLocalNotificationsPlugin.initialize(settings: initSettings);
 
   // Request POST_NOTIFICATIONS permission on Android 13+ (API 33)
   await flutterLocalNotificationsPlugin
@@ -81,63 +83,10 @@ class PconnectApp extends StatefulWidget {
   State<PconnectApp> createState() => _PconnectAppState();
 }
 
-class _PconnectAppState extends State<PconnectApp> {
+class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
   final _themeController = AppThemeController();
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_themeController.load());
-  }
-
-  @override
-  void dispose() {
-    _themeController.dispose();
-    super.dispose();
-  }
-
-  static const _seed = Color(0xFF6C5CE7);
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: _themeController,
-      builder: (context, themeMode, _) {
-        return ThemeControllerScope(
-          controller: _themeController,
-          child: MaterialApp(
-            title: 'Pconnect',
-            debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              useMaterial3: true,
-              colorSchemeSeed: _seed,
-              brightness: Brightness.light,
-            ),
-            darkTheme: ThemeData(
-              useMaterial3: true,
-              colorSchemeSeed: _seed,
-              brightness: Brightness.dark,
-            ),
-            themeMode: themeMode,
-            home: const MainShell(),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// ── Main Shell with bottom nav ──
-
-class MainShell extends StatefulWidget {
-  const MainShell({super.key});
-  @override
-  State<MainShell> createState() => _MainShellState();
-}
-
-class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   final _uuid = const Uuid();
-  int _currentIndex = 0;
+  bool _showWelcome = true;
 
   PcConnection? _conn;
   String _deviceId = '';
@@ -152,6 +101,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_themeController.load());
     _bootstrap();
   }
 
@@ -160,13 +110,16 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _statusSub?.cancel();
     _conn?.dispose();
+    _themeController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.resumed && _lastHost != null && _token != null) {
+    // Only reconnect on resume if currently disconnected — avoids disrupting
+    // active connections, ongoing file transfers, or screen captures.
+    if (state == AppLifecycleState.resumed && !_status.connected && _lastHost != null && _token != null) {
       unawaited(_connectHost(_lastHost!, _lastPort, wssPort: _lastWssPort));
     }
   }
@@ -180,6 +133,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _lastHost = prefs.getString('last_pc_host');
     _lastPort = prefs.getInt('last_pc_port') ?? kWsPortDefault;
     _lastWssPort = prefs.getInt('last_pc_wss_port');
+
+    // Skip welcome screen for returning users
+    final seenWelcome = prefs.getBool('seen_welcome') ?? false;
+    if (seenWelcome && mounted) {
+      setState(() => _showWelcome = false);
+    }
 
     if (_lastHost != null && _token != null) {
       unawaited(_connectHost(_lastHost!, _lastPort, wssPort: _lastWssPort));
@@ -222,41 +181,109 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _token = token;
   }
 
-  void _openDiscovery() {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => DiscoveryScreen(
-        deviceId: _deviceId,
-        onConnect: (host, port, wssPort) => _connectHost(host, port, wssPort: wssPort),
-        onPair: (code) => _pair(code),
-        status: _status,
-      ),
-    ));
+  void _disconnect() {
+    _conn?.dispose();
+    setState(() {
+      _conn = null;
+      _status = ConnectionStatus.disconnected;
+    });
   }
+
+  static const _seed = Color(0xFF6C5CE7);
 
   @override
   Widget build(BuildContext context) {
-    final conn = _conn;
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: _themeController,
+      builder: (context, themeMode, _) {
+        return ThemeControllerScope(
+          controller: _themeController,
+          child: MaterialApp(
+            title: 'Pconnect',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              useMaterial3: true,
+              colorSchemeSeed: _seed,
+              brightness: Brightness.light,
+            ),
+            darkTheme: ThemeData(
+              useMaterial3: true,
+              colorSchemeSeed: _seed,
+              brightness: Brightness.dark,
+            ),
+            themeMode: themeMode,
+            home: Builder(
+              builder: (context) {
+                if (_showWelcome) {
+                  return WelcomeScreen(
+                    onGetStarted: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setBool('seen_welcome', true);
+                      setState(() => _showWelcome = false);
+                    },
+                  );
+                } else if (!_status.connected) {
+                  return ConnectScreen(
+                    deviceId: _deviceId,
+                    status: _status,
+                    onConnect: _connectHost,
+                    onPair: _pair,
+                  );
+                } else {
+                  return MainShell(
+                    conn: _conn,
+                    status: _status,
+                    onDisconnect: _disconnect,
+                  );
+                }
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Main Shell with bottom nav ──
+
+class MainShell extends StatefulWidget {
+  final PcConnection? conn;
+  final ConnectionStatus status;
+  final VoidCallback onDisconnect;
+
+  const MainShell({
+    super.key,
+    required this.conn,
+    required this.status,
+    required this.onDisconnect,
+  });
+
+  @override
+  State<MainShell> createState() => _MainShellState();
+}
+
+class _MainShellState extends State<MainShell> {
+  int _currentIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final conn = widget.conn;
 
     final screens = [
       HomeScreen(
         conn: conn,
-        status: _status,
-        onOpenDiscovery: _openDiscovery,
+        status: widget.status,
+        onOpenDiscovery: widget.onDisconnect,
       ),
-      RemoteControlScreen(conn: conn, connected: _status.connected),
-      ControlScreen(conn: conn, status: _status),
+      RemoteControlScreen(conn: conn, connected: widget.status.connected),
+      ControlScreen(conn: conn, status: widget.status),
       SettingsScreen(
         conn: conn,
-        status: _status,
-        onDisconnect: () {
-          _conn?.dispose();
-          setState(() {
-            _conn = null;
-            _status = ConnectionStatus.disconnected;
-          });
-        },
+        status: widget.status,
+        onDisconnect: widget.onDisconnect,
       ),
-      LogsScreen(conn: conn, status: _status),
+      LogsScreen(conn: conn, status: widget.status),
     ];
 
     return Scaffold(

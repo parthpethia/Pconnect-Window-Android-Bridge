@@ -19,9 +19,10 @@ Future<void> showMirroredNotification({
   const details = NotificationDetails(android: androidDetails);
 
   await flutterLocalNotificationsPlugin.show(
-    DateTime.now().millisecondsSinceEpoch ~/ 1000,
-    '$appName: $title',
-    body,
-    details,
+    id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    title: '$appName: $title',
+    body: body,
+    notificationDetails: details,
   );
 }
+
