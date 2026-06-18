@@ -14,6 +14,8 @@ const int kWsPortDefault = 47821;
 const int kDefaultWssPort = 47824;
 const int kDiscoveryPort = 47822;
 const String kDiscoverProbe = 'PCONNECT_DISCOVER_V1';
+const String kClientVersion = '0.2.0+1';
+const int kClientProto = 2;
 
 class DiscoveredPc {
   final String name;
@@ -130,8 +132,10 @@ class PcConnection {
 
   Timer? _reconnectTimer;
   int _reconnectDelayMs = 500;
+  bool _needsPairing = false;
 
   Completer<Map<String, dynamic>>? _diagCompleter;
+  Completer<String?>? _pairCompleter;
 
   PcConnection({required this.deviceId});
 
@@ -144,8 +148,9 @@ class PcConnection {
   }
 
   Future<void> connect({required String host, required int port, required String? token, int? wssPort}) async {
-    _host = host;
-    _port = port;
+    final parsed = PcWebSocket.parseHostInput(host, defaultWsPort: port);
+    _host = parsed.host.isNotEmpty ? parsed.host : host.trim();
+    _port = parsed.wsPort ?? port;
     _wssPort = wssPort;
     _token = token;
     await _connectInternal();
@@ -161,19 +166,25 @@ class PcConnection {
     _cmdSeq = 0;
 
     try {
+      await _sub?.cancel();
+      try {
+        await _channel?.sink.close();
+      } catch (_) {}
+      _channel = null;
+
       final channel = await PcWebSocket.connectPreferred(
         host: host,
         wsPort: port,
-      wssPort: _wssPort ?? kDefaultWssPort,
+        wssPort: _wssPort ?? kDefaultWssPort,
         preferTls: !kIsWeb && Platform.isAndroid,
         onTrace: (t, d) => _lastTransportTrace = '$t $d',
       );
       if (channel == null) {
-        _scheduleReconnect('Connect failed (no channel)');
+        final hint = _lastTransportTrace ?? 'no route to PC (check IP, Wi‑Fi, firewall ports 47821/47824)';
+        _scheduleReconnect('Connect failed ($hint)');
         return;
       }
       _channel = channel;
-      _sub?.cancel();
       _sub = channel.stream.listen(
         (event) => unawaited(_onMessage(event)),
         onError: (e) => _scheduleReconnect('WebSocket error: $e'),
@@ -183,8 +194,8 @@ class PcConnection {
       _send({
         'v': 1,
         'type': 'hello',
-        'proto': 2,
-        'clientVersion': '0.2.0+1',
+        'proto': kClientProto,
+        'clientVersion': kClientVersion,
         'deviceId': deviceId,
         if (_token != null) 'token': _token,
       });
@@ -226,6 +237,7 @@ class PcConnection {
         case 'helloAck':
           await _armIntegrityKey();
           _reconnectDelayMs = 500;
+          _needsPairing = false;
           _setStatus(ConnectionStatus(
             connected: true,
             needsPairing: false,
@@ -235,6 +247,7 @@ class PcConnection {
           break;
 
         case 'authRequired':
+          _needsPairing = true;
           _setStatus(const ConnectionStatus(connected: false, needsPairing: true));
           break;
 
@@ -242,6 +255,11 @@ class PcConnection {
           final token = obj['token'] as String?;
           if (token != null) _token = token;
           await _armIntegrityKey();
+          _needsPairing = false;
+          // Complete any pending pair() call
+          if (_pairCompleter != null && !_pairCompleter!.isCompleted) {
+            _pairCompleter!.complete(_token);
+          }
           break;
 
         case 'clipboardUpdate':
@@ -343,14 +361,26 @@ class PcConnection {
           final cur = currentStatus;
           _setStatus(ConnectionStatus(
             connected: cur.connected,
-            needsPairing: cur.needsPairing,
+            needsPairing: cur.needsPairing || _needsPairing,
             pcName: cur.pcName,
             error: msg,
             role: cur.role,
           ));
+          // Fail any pending pair() call on error
+          if (_pairCompleter != null && !_pairCompleter!.isCompleted) {
+            _pairCompleter!.complete(null);
+          }
           break;
       }
-    } catch (_) {}
+    } catch (e) {
+      _setStatus(ConnectionStatus(
+        connected: currentStatus.connected,
+        needsPairing: currentStatus.needsPairing || _needsPairing,
+        pcName: currentStatus.pcName,
+        error: 'Invalid message from PC',
+        role: currentStatus.role,
+      ));
+    }
   }
 
   String? get lastTransportTrace => _lastTransportTrace;
@@ -378,18 +408,24 @@ class PcConnection {
   }
 
   Future<String?> pair({required String code, required String deviceName}) async {
-    final tokenBefore = _token;
+    final c = Completer<String?>();
+    _pairCompleter = c;
     _send({
-      'v': 1, 'type': 'pair',
-      'deviceId': deviceId, 'deviceName': deviceName, 'code': code,
+      'v': 1,
+      'type': 'pair',
+      'proto': kClientProto,
+      'clientVersion': kClientVersion,
+      'deviceId': deviceId,
+      'deviceName': deviceName,
+      'code': code,
     });
-    for (var i = 0; i < 40; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      if (_token != null && _token != tokenBefore) return _token;
-      // Also check if the connection became authenticated via helloAck
-      if (currentStatus.connected && _token != null) return _token;
+    try {
+      return await c.future.timeout(const Duration(seconds: 5));
+    } catch (_) {
+      return null;
+    } finally {
+      if (_pairCompleter == c) _pairCompleter = null;
     }
-    return null;
   }
 
   // ── Input Control ──
@@ -509,28 +545,34 @@ class PcConnection {
     try {
       final file = File(filePath);
       if (!await file.exists()) return;
-      final bytes = await file.readAsBytes();
+      final fileSize = await file.length();
+      if (fileSize <= 0) return;
       // Use Uri to correctly extract filename on both Windows and Unix paths
       final filename = file.uri.pathSegments.last;
       final transferId = const Uuid().v4();
 
-      final progress = FileTransferProgress(filename: filename, totalBytes: bytes.length, isDownload: false);
+      final progress = FileTransferProgress(filename: filename, totalBytes: fileSize, isDownload: false);
       activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
 
-      _send({'v': 1, 'type': 'fileTransferStart', 'id': transferId, 'filename': filename, 'size': bytes.length, 'direction': 'upload'});
+      _send({'v': 1, 'type': 'fileTransferStart', 'id': transferId, 'filename': filename, 'size': fileSize, 'direction': 'upload'});
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
+      // Stream chunks from disk instead of reading entire file into memory
       const chunkSize = 50 * 1024;
-      final totalChunks = (bytes.length / chunkSize).ceil();
-      for (int i = 0; i < totalChunks; i++) {
-        final start = i * chunkSize;
-        final end = (start + chunkSize).clamp(0, bytes.length);
-        final chunk = bytes.sublist(start, end);
-        _send({'v': 1, 'type': 'fileTransferChunk', 'id': transferId, 'chunkIndex': i, 'totalChunks': totalChunks, 'data': base64Encode(chunk), 'size': chunk.length});
-        progress.transferredBytes = end;
-        onProgress(progress);
-        activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+      final totalChunks = (fileSize / chunkSize).ceil();
+      final raf = await file.open(mode: FileMode.read);
+      try {
+        for (int i = 0; i < totalChunks; i++) {
+          final chunk = await raf.read(chunkSize);
+          if (chunk.isEmpty) break;
+          _send({'v': 1, 'type': 'fileTransferChunk', 'id': transferId, 'chunkIndex': i, 'totalChunks': totalChunks, 'data': base64Encode(chunk), 'size': chunk.length});
+          progress.transferredBytes += chunk.length;
+          onProgress(progress);
+          activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      } finally {
+        await raf.close();
       }
 
       _send({'v': 1, 'type': 'fileTransferComplete', 'id': transferId});
@@ -551,14 +593,19 @@ class PcConnection {
 
   void _scheduleReconnect(String reason) {
     if (_disposed) return;
+    final preservePairing = _needsPairing || currentStatus.needsPairing;
     _setStatus(ConnectionStatus(
-      connected: false, needsPairing: false, error: reason,
-      pcName: currentStatus.pcName, role: currentStatus.role,
+      connected: false,
+      needsPairing: preservePairing,
+      error: preservePairing ? null : reason,
+      pcName: currentStatus.pcName,
+      role: currentStatus.role,
     ));
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(Duration(milliseconds: _reconnectDelayMs), () {
       if (_disposed) return;
-      _reconnectDelayMs = (_reconnectDelayMs * 2).clamp(500, 5000);
+      // Cap at 30s instead of 5s to reduce battery drain during prolonged outages
+      _reconnectDelayMs = (_reconnectDelayMs * 2).clamp(500, 30000);
       unawaited(_connectInternal());
     });
   }
@@ -579,6 +626,7 @@ class DiscoveryClient {
     socket.broadcastEnabled = true;
     final results = <DiscoveredPc>[];
     final seen = <String>{};
+    final probeBytes = utf8.encode(kDiscoverProbe);
 
     socket.listen((event) {
       if (event != RawSocketEvent.read) return;
@@ -597,10 +645,49 @@ class DiscoveryClient {
       } catch (_) {}
     });
 
-    socket.send(utf8.encode(kDiscoverProbe), InternetAddress('255.255.255.255'), kDiscoveryPort);
-    await Future<void>.delayed(timeout);
+    final targets = <InternetAddress>[InternetAddress('255.255.255.255')];
+    try {
+      for (final iface in await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: false)) {
+        for (final addr in iface.addresses) {
+          final bcast = _guessBroadcast24(addr.address);
+          if (bcast != null && !targets.any((t) => t.address == bcast)) {
+            targets.add(InternetAddress(bcast));
+          }
+        }
+      }
+    } catch (_) {}
+
+    final end = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(end)) {
+      for (final t in targets) {
+        try {
+          socket.send(probeBytes, t, kDiscoveryPort);
+        } catch (_) {}
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+
     socket.close();
     return results;
+  }
+
+  /// Typical home Wi‑Fi /24 directed broadcast (best-effort on Android).
+  static String? _guessBroadcast24(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4) return null;
+    final octets = parts.map(int.tryParse).toList();
+    if (octets.any((o) => o == null || o < 0 || o > 255)) return null;
+    final a = octets[0]!;
+    if (a == 192 && octets[1] == 168) {
+      return '192.168.${octets[2]}.255';
+    }
+    if (a == 10) {
+      return '10.${octets[1]}.${octets[2]}.255';
+    }
+    if (a == 172 && octets[1]! >= 16 && octets[1]! <= 31) {
+      return '172.${octets[1]}.${octets[2]}.255';
+    }
+    return null;
   }
 }
 

@@ -222,10 +222,40 @@ internal sealed class FileTransferManager : IDisposable
         }
     }
 
+    private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
     private static string SanitizeFilename(string filename)
     {
+        // Strip any directory components first (prevents ..\..\Desktop\malware.exe)
+        var nameOnly = Path.GetFileName(filename);
+        if (string.IsNullOrWhiteSpace(nameOnly))
+            nameOnly = "unnamed_transfer";
+
+        // Remove invalid filename characters
         var invalidChars = Path.GetInvalidFileNameChars();
-        return string.Concat(filename.Split(invalidChars));
+        nameOnly = string.Concat(nameOnly.Split(invalidChars));
+
+        if (string.IsNullOrWhiteSpace(nameOnly))
+            nameOnly = "unnamed_transfer";
+
+        // Reject reserved Windows device names (CON, PRN, NUL, COM1, etc.)
+        var baseName = Path.GetFileNameWithoutExtension(nameOnly);
+        if (ReservedNames.Contains(baseName))
+            nameOnly = $"_{nameOnly}";
+
+        // Limit total length to prevent filesystem errors
+        if (nameOnly.Length > 200)
+        {
+            var ext = Path.GetExtension(nameOnly);
+            nameOnly = nameOnly[..(200 - ext.Length)] + ext;
+        }
+
+        return nameOnly;
     }
 
     public void Dispose()

@@ -154,31 +154,33 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
       _status = ConnectionStatus.disconnected;
     });
 
-    _statusSub = conn.statusStream.listen((s) {
+    _statusSub = conn.statusStream.listen((s) async {
       if (!mounted) return;
       setState(() => _status = s);
+      if (s.connected) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('last_pc_host', host);
+        await prefs.setInt('last_pc_port', port);
+        final wp = wssPort ?? _lastWssPort ?? kDefaultWssPort;
+        await prefs.setInt('last_pc_wss_port', wp);
+        _lastHost = host;
+        _lastPort = port;
+        _lastWssPort = wp;
+      }
     });
 
     await conn.connect(host: host, port: port, token: _token, wssPort: wssPort ?? _lastWssPort);
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('last_pc_host', host);
-    await prefs.setInt('last_pc_port', port);
-    final wp = wssPort ?? _lastWssPort ?? kDefaultWssPort;
-    await prefs.setInt('last_pc_wss_port', wp);
-    _lastHost = host;
-    _lastPort = port;
-    _lastWssPort = wp;
   }
 
-  Future<void> _pair(String code) async {
+  Future<bool> _pair(String code) async {
     final conn = _conn;
-    if (conn == null || code.isEmpty) return;
+    if (conn == null || code.isEmpty) return false;
     final token = await conn.pair(code: code, deviceName: 'Android');
-    if (token == null) return;
+    if (token == null) return false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('token', token);
     _token = token;
+    return true;
   }
 
   void _disconnect() {

@@ -198,16 +198,16 @@ internal sealed class PcActions
 
     public void SetClipboard(string text)
     {
-        try
+        if (string.IsNullOrEmpty(text)) return;
+        // Clipboard.SetText requires STA thread; WebSocket handler runs on MTA.
+        // Marshal to a dedicated STA thread to avoid ExternalException.
+        var thread = new Thread(() =>
         {
-            if (!string.IsNullOrEmpty(text))
-            {
-                Clipboard.SetText(text);
-            }
-        }
-        catch
-        {
-            // Fail silently - clipboard may be in use
-        }
+            try { Clipboard.SetText(text); }
+            catch { /* Fail silently - clipboard may be in use */ }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join(TimeSpan.FromSeconds(2)); // Bounded wait
     }
 }

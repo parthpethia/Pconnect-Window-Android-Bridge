@@ -19,8 +19,8 @@ flutter run
 
 ## Notes
 
-- Discovery uses UDP broadcast on port `47822`.
-- Control uses WebSocket on port `47821` (`/ws`).
+- Discovery uses UDP broadcast on port `47822` (repeated probes + subnet broadcast).
+- Control uses WebSocket on port `47821` (`/ws`); Android also tries WSS on `47824` with trust-on-first-use.
 
 ## Troubleshooting (Gradle daemon disappeared / hs_err_pid\*.log)
 

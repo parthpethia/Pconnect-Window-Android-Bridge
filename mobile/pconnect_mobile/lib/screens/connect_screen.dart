@@ -16,7 +16,7 @@ class ConnectScreen extends StatefulWidget {
   final String deviceId;
   final ConnectionStatus status;
   final Future<void> Function(String host, int port, {int? wssPort}) onConnect;
-  final Future<void> Function(String code) onPair;
+  final Future<bool> Function(String code) onPair;
 
   const ConnectScreen({
     super.key,
@@ -123,24 +123,39 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
     }
   }
 
-  void _submitCode() {
+  Future<void> _submitCode() async {
     final code = _codeController.text.trim();
     if (code.isEmpty) return;
-    widget.onPair(code);
-    _codeController.clear();
+    final ok = await widget.onPair(code);
+    if (!mounted) return;
+    if (ok) {
+      _codeController.clear();
+    } else {
+      final msg = widget.status.error ??
+          'Pairing failed. Confirm the 6-digit code on your PC (it rotates every 5 minutes).';
+      setState(() => _connError = msg);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
   }
 
   void _openQrScanner() {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => _ModernQrScanPage(
-        onResult: (ip, port, code) {
+        onResult: (ip, port, wssPort, code) {
+          if (ip == '0.0.0.0' || ip.startsWith('127.')) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('QR code has no valid PC IP. Enter the address manually.')),
+            );
+            return;
+          }
           Navigator.of(context).pop();
           _ipController.text = ip;
           _portController.text = port.toString();
-          _connectTo(ip, port, wssPort: kDefaultWssPort);
+          _connectTo(ip, port, wssPort: wssPort ?? kDefaultWssPort);
           if (code != null && code.isNotEmpty) {
-            Future.delayed(const Duration(milliseconds: 600), () {
-              if (mounted) widget.onPair(code);
+            Future<void>.delayed(const Duration(milliseconds: 800), () async {
+              if (!mounted) return;
+              await widget.onPair(code);
             });
           }
         },
@@ -710,7 +725,7 @@ class _MiniLogoPainter extends CustomPainter {
 
 // ── Modern styled QR scan page ──
 class _ModernQrScanPage extends StatefulWidget {
-  final void Function(String ip, int port, String? pairingCode) onResult;
+  final void Function(String ip, int port, int? wssPort, String? pairingCode) onResult;
 
   const _ModernQrScanPage({required this.onResult});
 
@@ -768,10 +783,11 @@ class _ModernQrScanPageState extends State<_ModernQrScanPage> {
         final json = jsonDecode(raw) as Map<String, dynamic>;
         final ip = json['ip'] as String?;
         final port = (json['port'] as num?)?.toInt() ?? kWsPortDefault;
+        final wssPort = (json['wssPort'] as num?)?.toInt();
         final code = json['pairingCode'] as String?;
-        if (ip == null || ip.isEmpty) continue;
+        if (ip == null || ip.isEmpty || ip == '0.0.0.0') continue;
         _handled = true;
-        widget.onResult(ip, port, code);
+        widget.onResult(ip, port, wssPort, code);
         return;
       } catch (_) {
         // Ignored

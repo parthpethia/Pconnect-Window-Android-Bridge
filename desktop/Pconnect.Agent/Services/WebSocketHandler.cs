@@ -17,7 +17,7 @@ internal sealed class WebSocketHandler
     private readonly FileTransferManager _fileTransfer = new();
     private readonly CustomCommandService _customCommands = new();
     private readonly AuditLogService _auditLog = new();
-    private NotificationListenerService? _notificationListener;
+
     private readonly Action<string, string?>? _onDeviceAuthed;
     private readonly Action<string>? _onDeviceDisconnected;
     private SafeStartupOptions _safe = SafeStartupOptions.Normal;
@@ -70,6 +70,7 @@ internal sealed class WebSocketHandler
         ScreenCaptureService? screenCapture = null;
         ClipboardMonitor? clipboardMonitor = null;
         System.Threading.Timer? clipboardPollTimer = null;
+        NotificationListenerService? notificationListener = null;
         System.Threading.Timer? autoLockTimer = null;
         var sessionNonceBytes = RandomNumberGenerator.GetBytes(16);
         byte[]? integrityKey = null;
@@ -119,7 +120,7 @@ internal sealed class WebSocketHandler
                 if (await listener.RequestAccessAsync())
                 {
                     listener.Start();
-                    _notificationListener = listener;
+                    notificationListener = listener;
                 }
                 else
                 {
@@ -209,8 +210,12 @@ internal sealed class WebSocketHandler
                                     v = 1, type = "clipboardUpdate", data = b64, format = "text/plain", source = "system"
                                 });
                                 var bytes = Encoding.UTF8.GetBytes(json);
-                                try { ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct).GetAwaiter().GetResult(); }
-                                catch { /* connection may have closed */ }
+                                // Fire-and-forget: avoid blocking the timer thread with .GetAwaiter().GetResult()
+                                _ = Task.Run(async () =>
+                                {
+                                    try { await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
+                                    catch { /* connection may have closed */ }
+                                });
                             });
                             clipboardPollTimer = new System.Threading.Timer(_ => clipboardMonitor?.Poll(), null, 500, 500);
                         }
@@ -277,8 +282,12 @@ internal sealed class WebSocketHandler
                                 v = 1, type = "clipboardUpdate", data = b64, format = "text/plain", source = "system"
                             });
                             var bytes = Encoding.UTF8.GetBytes(json);
-                            try { ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct).GetAwaiter().GetResult(); }
-                            catch { /* connection may have closed */ }
+                            // Fire-and-forget: avoid blocking the timer thread with .GetAwaiter().GetResult()
+                            _ = Task.Run(async () =>
+                            {
+                                try { await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
+                                catch { /* connection may have closed */ }
+                            });
                         });
                         clipboardPollTimer = new System.Threading.Timer(_ => clipboardMonitor?.Poll(), null, 500, 500);
                         continue;
@@ -609,12 +618,14 @@ internal sealed class WebSocketHandler
                         break;
 
                     case "filetransferabort":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
                         var faId = msg.GetStringOrNull("id");
                         if (!string.IsNullOrWhiteSpace(faId)) _fileTransfer.AbortTransfer(faId);
                         await SendAsync(ws, new { v = 1, type = "ok" }, ct);
                         break;
 
                     case "listrecentfiles":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
                         var limit = msg.GetIntOrDefault("limit", 20);
                         var recentFiles = RecentFilesHelper.GetRecentFiles(limit);
                         await SendAsync(ws, new
@@ -659,6 +670,7 @@ internal sealed class WebSocketHandler
 
                     // ── New: App list ──
                     case "getapplist":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
                         var apps = AppListService.GetInstalledApps();
                         await SendAsync(ws, new
                         {
@@ -749,6 +761,7 @@ internal sealed class WebSocketHandler
 
                     // ── New: Audit logs ──
                     case "getlogs":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
                         var logDate = msg.GetStringOrNull("date") ?? DateTimeOffset.Now.ToString("yyyy-MM-dd");
                         var logEntries = _auditLog.GetLogs(logDate);
                         await SendAsync(ws, new
@@ -769,8 +782,8 @@ internal sealed class WebSocketHandler
             screenCapture?.Dispose();
             clipboardPollTimer?.Dispose();
             clipboardMonitor?.Dispose();
-            _notificationListener?.Stop();
-            _notificationListener = null;
+            notificationListener?.Stop();
+            notificationListener = null;
 
             try
             {
@@ -804,6 +817,8 @@ internal sealed class WebSocketHandler
         await SendAsync(ws, new { v = 1, type = "error", message = "Insufficient permissions for this action" }, ct);
     }
 
+    private const int MaxMessageBytes = 10 * 1024 * 1024; // 10 MB hard limit
+
     private static async Task<Dictionary<string, JsonElement>?> ReceiveJsonAsync(WebSocket ws, CancellationToken ct)
     {
         var buffer = new byte[256 * 1024];
@@ -817,6 +832,14 @@ internal sealed class WebSocketHandler
 
             if (result.MessageType == WebSocketMessageType.Close) return null;
             ms.Write(buffer, 0, result.Count);
+
+            if (ms.Length > MaxMessageBytes)
+            {
+                // Oversized message — close the connection to prevent OOM.
+                try { await ws.CloseAsync(WebSocketCloseStatus.MessageTooBig, "Message too large", CancellationToken.None); } catch { }
+                return null;
+            }
+
             if (result.EndOfMessage) break;
         }
 

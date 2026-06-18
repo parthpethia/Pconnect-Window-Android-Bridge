@@ -8,7 +8,7 @@
 
 * 🔌 Local-only communication (no cloud required)
 * ⚡ Low-latency WebSocket control channel
-* 📡 Automatic PC discovery via mDNS
+* 📡 Automatic PC discovery via UDP broadcast on the LAN
 * 🔐 Secure pairing with rotating code + device token
 * 🎛 Remote actions:
 
@@ -34,9 +34,10 @@ Pconnect/
 ### Windows PC
 
 * .NET 8 runtime
-* Open ports:
+* Open ports (Private network in Windows Firewall):
 
-  * TCP `47821` — WebSocket control
+  * TCP `47821` — WebSocket control (cleartext)
+  * TCP `47824` — WebSocket over TLS (Android prefers this first)
   * UDP `47822` — LAN discovery
 
 ### Android Development Machine

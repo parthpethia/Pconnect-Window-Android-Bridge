@@ -46,8 +46,8 @@ internal sealed class TrayAppContext : ApplicationContext
             _tray.ShowBalloonTip(6000, "Pconnect", _runtime.DiscoveryStartError, ToolTipIcon.Warning);
         }
 
-        // Show dashboard when the exe is launched.
-        PostToUi(ShowDashboard);
+        // Agent starts silently in the tray. Dashboard is accessible via tray icon
+        // double-click, context menu, or second-launch IPC.
     }
 
     private void ShowDashboard()

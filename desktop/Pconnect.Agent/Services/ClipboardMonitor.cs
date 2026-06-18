@@ -60,22 +60,29 @@ internal sealed class ClipboardMonitor : IDisposable
 
     /// <summary>
     /// Safely retrieves text from the system clipboard.
+    /// Must marshal to STA thread since Poll() runs on a timer callback (MTA).
     /// </summary>
     private static string GetClipboardText()
     {
-        try
+        string result = string.Empty;
+        var thread = new Thread(() =>
         {
-            if (Clipboard.ContainsText())
+            try
             {
-                return Clipboard.GetText() ?? string.Empty;
+                if (Clipboard.ContainsText())
+                {
+                    result = Clipboard.GetText() ?? string.Empty;
+                }
             }
-        }
-        catch
-        {
-            // Clipboard may be in use by another process
-        }
-
-        return string.Empty;
+            catch
+            {
+                // Clipboard may be in use by another process
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join(TimeSpan.FromSeconds(1)); // Bounded wait
+        return result;
     }
 
     public void Dispose()

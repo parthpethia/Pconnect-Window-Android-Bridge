@@ -8,6 +8,12 @@ internal sealed class PairingService : IDisposable
     private readonly System.Threading.Timer _timer;
     private string _currentCode = GenerateCode();
 
+    // Rate limiting: track consecutive failures
+    private int _consecutiveFailures;
+    private DateTime _lockoutUntilUtc = DateTime.MinValue;
+    private const int MaxAttemptsBeforeLockout = 10;
+    private const int LockoutSeconds = 60;
+
     public string CurrentCode
     {
         get { lock (_gate) { return _currentCode; } }
@@ -34,7 +40,27 @@ internal sealed class PairingService : IDisposable
 
         lock (_gate)
         {
-            return string.Equals(CurrentCode, code.Trim(), StringComparison.Ordinal);
+            // Enforce lockout period after too many failed attempts
+            if (DateTime.UtcNow < _lockoutUntilUtc)
+            {
+                return false;
+            }
+
+            if (string.Equals(_currentCode, code.Trim(), StringComparison.Ordinal))
+            {
+                _consecutiveFailures = 0;
+                return true;
+            }
+
+            // Track failure and enforce lockout after threshold
+            _consecutiveFailures++;
+            if (_consecutiveFailures >= MaxAttemptsBeforeLockout)
+            {
+                _lockoutUntilUtc = DateTime.UtcNow.AddSeconds(LockoutSeconds);
+                Console.WriteLine($"[PairingService] Too many pairing failures ({_consecutiveFailures}), locked out for {LockoutSeconds}s.");
+            }
+
+            return false;
         }
     }
 
@@ -43,6 +69,9 @@ internal sealed class PairingService : IDisposable
         lock (_gate)
         {
             _currentCode = GenerateCode();
+            // Reset failure counter on code rotation so legitimate users aren't locked out forever
+            _consecutiveFailures = 0;
+            _lockoutUntilUtc = DateTime.MinValue;
         }
     }
 
@@ -55,3 +84,4 @@ internal sealed class PairingService : IDisposable
 
     public void Dispose() => _timer.Dispose();
 }
+

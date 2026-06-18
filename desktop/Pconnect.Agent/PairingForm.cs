@@ -44,10 +44,11 @@ internal sealed class PairingForm : Form
 
         _urlLabel = new Label
         {
-            Text = runtime.GetLikelyWebSocketUrl() ?? "ws://<this-pc-ip>:47821/ws",
+            Text = FormatUrlHint(runtime),
             AutoSize = true,
             Left = 18,
             Top = 115,
+            MaximumSize = new Size(380, 0),
         };
 
         var qrLabel = new Label
@@ -110,25 +111,44 @@ internal sealed class PairingForm : Form
         UpdateQrCode(code);
     }
 
+    private static string FormatUrlHint(AgentRuntime runtime)
+    {
+        var url = runtime.GetLikelyWebSocketUrl();
+        if (url is not null)
+        {
+            var all = runtime.GetLanIpv4Candidates();
+            if (all.Count > 1)
+            {
+                return $"{url}  (also: {string.Join(", ", all.Skip(1))})";
+            }
+
+            return url;
+        }
+
+        return "Set PC IP manually on phone (no LAN IPv4 detected)";
+    }
+
     private void UpdateQrCode(string code)
     {
         try
         {
             var url = _runtime.GetLikelyWebSocketUrl();
-            var ip = "0.0.0.0";
-            var port = AgentRuntime.DefaultWsPort;
-
-            if (url is not null)
+            if (url is null)
             {
-                var uri = new Uri(url);
-                ip = uri.Host;
-                port = uri.Port;
+                _qrPictureBox.Image?.Dispose();
+                _qrPictureBox.Image = null;
+                return;
             }
+
+            var uri = new Uri(url);
+            var ip = uri.Host;
+            var port = uri.Port;
 
             var qrData = JsonSerializer.Serialize(new
             {
                 ip,
                 port,
+                wssPort = AgentRuntime.DefaultWssPort,
                 pairingCode = code,
             });
 
@@ -158,10 +178,10 @@ internal sealed class PairingForm : Form
             UpdateQrCode(current);
         }
 
-        var url = _runtime.GetLikelyWebSocketUrl();
-        if (url is not null && !string.Equals(_urlLabel.Text, url, StringComparison.Ordinal))
+        var hint = FormatUrlHint(_runtime);
+        if (!string.Equals(_urlLabel.Text, hint, StringComparison.Ordinal))
         {
-            _urlLabel.Text = url;
+            _urlLabel.Text = hint;
         }
     }
 

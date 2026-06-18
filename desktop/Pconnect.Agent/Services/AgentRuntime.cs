@@ -138,6 +138,7 @@ internal sealed class AgentRuntime : IDisposable
         }
 
         _runTask = Task.Run(() => RunWebHostAsync(token));
+        FirewallPortHelper.EnsureLanRulesOnce(DefaultWsPort, DefaultWssPort, DefaultDiscoveryPort);
         RaiseStateChanged();
     }
 
@@ -204,7 +205,7 @@ internal sealed class AgentRuntime : IDisposable
 
     public string? GetLikelyWebSocketUrl()
     {
-        var ip = GetLikelyLanIPv4();
+        var ip = LanAddressHelper.GetPreferredLanIpv4();
         if (ip is null)
         {
             return null;
@@ -213,46 +214,8 @@ internal sealed class AgentRuntime : IDisposable
         return $"ws://{ip}:{DefaultWsPort}/ws";
     }
 
-    private static string? GetLikelyLanIPv4()
-    {
-        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
-        {
-            if (ni.OperationalStatus != OperationalStatus.Up)
-            {
-                continue;
-            }
-
-            if (ni.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel)
-            {
-                continue;
-            }
-
-            var ipProps = ni.GetIPProperties();
-            foreach (var ua in ipProps.UnicastAddresses)
-            {
-                if (ua.Address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
-                {
-                    continue;
-                }
-
-                if (IPAddress.IsLoopback(ua.Address))
-                {
-                    continue;
-                }
-
-                var ip = ua.Address.ToString();
-                // Skip link-local (169.254.x.x)
-                if (ip.StartsWith("169.254.", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                return ip;
-            }
-        }
-
-        return null;
-    }
+    /// <summary>LAN IPv4 addresses for pairing UI (Wi‑Fi/Ethernet preferred over virtual adapters).</summary>
+    public IReadOnlyList<string> GetLanIpv4Candidates() => LanAddressHelper.GetLanIpv4CandidatesBestFirst();
 
     private async Task RunWebHostAsync(CancellationToken ct)
     {
@@ -262,14 +225,27 @@ internal sealed class AgentRuntime : IDisposable
             var tlsCert = LanCertificateProvider.GetOrCreate();
             builder.WebHost.ConfigureKestrel(options =>
             {
-                options.ListenAnyIP(DefaultWsPort);
-                try
+                // Bind to LAN IPs only (not 0.0.0.0) to prevent localhost-based detection
+                // by Chrome or other local applications. Falls back to AnyIP if no LAN adapter found.
+                var lanIps = LanAddressHelper.GetLanIpv4CandidatesBestFirst();
+                if (lanIps.Count > 0)
                 {
-                    options.ListenAnyIP(DefaultWssPort, listen => listen.UseHttps(tlsCert));
+                    foreach (var ip in lanIps)
+                    {
+                        if (IPAddress.TryParse(ip, out var addr))
+                        {
+                            options.Listen(addr, DefaultWsPort);
+                            try { options.Listen(addr, DefaultWssPort, listen => listen.UseHttps(tlsCert)); }
+                            catch { /* WSS bind failed for this IP; continue */ }
+                        }
+                    }
                 }
-                catch
+                else
                 {
-                    // WSS bind failed (port conflict); cleartext WS remains.
+                    // No LAN adapter detected — bind to all as fallback so the user isn't stuck.
+                    options.ListenAnyIP(DefaultWsPort);
+                    try { options.ListenAnyIP(DefaultWssPort, listen => listen.UseHttps(tlsCert)); }
+                    catch { /* WSS bind failed; cleartext WS remains. */ }
                 }
             });
 
@@ -277,7 +253,14 @@ internal sealed class AgentRuntime : IDisposable
 
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
 
-            app.MapGet("/health", () => Results.Text("ok"));
+            // Health check requires a custom header to prevent detection by web-page port scanning.
+            // Legitimate callers (mobile app, scripts) must send "X-Pconnect: 1".
+            app.MapGet("/health", (HttpContext ctx) =>
+            {
+                if (ctx.Request.Headers.TryGetValue("X-Pconnect", out var v) && v == "1")
+                    return Results.Text("ok");
+                return Results.StatusCode(404);
+            });
 
             app.Map("/ws", async context =>
             {
@@ -285,6 +268,16 @@ internal sealed class AgentRuntime : IDisposable
                 {
                     context.Response.StatusCode = 400;
                     await context.Response.WriteAsync("WebSocket expected", ct);
+                    return;
+                }
+
+                // Reject WebSocket upgrades from browser origins to prevent Chrome/web-page probing.
+                // The Flutter mobile app does NOT send an Origin header, so this only blocks browsers.
+                var origin = context.Request.Headers["Origin"].ToString();
+                if (!string.IsNullOrEmpty(origin))
+                {
+                    context.Response.StatusCode = 403;
+                    await context.Response.WriteAsync("Browser connections not allowed", ct);
                     return;
                 }
 

@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace Pconnect.Agent.Services;
@@ -18,6 +19,57 @@ internal sealed class ScreenCaptureService : IDisposable
     private int _intervalMs = 2000;
     private int _targetWidth = 720;
     private long _jpegQuality = 65L;
+
+    private const int CursorShowing = 0x00000001;
+    private const int DiNormal = 0x0003;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointNative
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CursorInfo
+    {
+        public int CbSize;
+        public int Flags;
+        public IntPtr HCursor;
+        public PointNative PtScreenPos;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorInfo(ref CursorInfo pci);
+
+    [DllImport("user32.dll")]
+    private static extern bool DrawIconEx(
+        IntPtr hdc,
+        int xLeft,
+        int yTop,
+        IntPtr hIcon,
+        int cxWidth,
+        int cyHeight,
+        int istepIfAniCur,
+        IntPtr hbrFlickerFreeDraw,
+        int diFlags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IconInfo
+    {
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool FIcon;
+        public int XHotspot;
+        public int YHotspot;
+        public IntPtr HbmMask;
+        public IntPtr HbmColor;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetIconInfo(IntPtr hIcon, out IconInfo piconinfo);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr hObject);
 
     public ScreenCaptureService(Action<string, int, int>? onFrame)
     {
@@ -85,6 +137,7 @@ internal sealed class ScreenCaptureService : IDisposable
             using (var g = Graphics.FromImage(fullBitmap))
             {
                 g.CopyFromScreen(bounds.Value.Location, Point.Empty, bounds.Value.Size);
+                DrawCursorOnto(g, bounds.Value);
             }
 
             // Resize to target width with high quality
@@ -134,6 +187,51 @@ internal sealed class ScreenCaptureService : IDisposable
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// GDI screen capture does not include the pointer; composite it so remote preview is usable.
+    /// </summary>
+    private static void DrawCursorOnto(Graphics g, Rectangle screenBounds)
+    {
+        var ci = new CursorInfo { CbSize = Marshal.SizeOf<CursorInfo>() };
+        if (!GetCursorInfo(ref ci) || (ci.Flags & CursorShowing) == 0 || ci.HCursor == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var x = ci.PtScreenPos.X - screenBounds.X;
+        var y = ci.PtScreenPos.Y - screenBounds.Y;
+
+        if (GetIconInfo(ci.HCursor, out var iconInfo))
+        {
+            x -= iconInfo.XHotspot;
+            y -= iconInfo.YHotspot;
+            if (iconInfo.HbmColor != IntPtr.Zero)
+            {
+                DeleteObject(iconInfo.HbmColor);
+            }
+
+            if (iconInfo.HbmMask != IntPtr.Zero)
+            {
+                DeleteObject(iconInfo.HbmMask);
+            }
+        }
+
+        if (x < -64 || y < -64 || x > screenBounds.Width + 64 || y > screenBounds.Height + 64)
+        {
+            return;
+        }
+
+        var hdc = g.GetHdc();
+        try
+        {
+            DrawIconEx(hdc, x, y, ci.HCursor, 0, 0, 0, IntPtr.Zero, DiNormal);
+        }
+        finally
+        {
+            g.ReleaseHdc(hdc);
+        }
     }
 
     public void Dispose()
