@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
 
 namespace Pconnect.Agent.Services;
 
@@ -19,6 +20,9 @@ internal sealed class ScreenCaptureService : IDisposable
     private int _intervalMs = 2000;
     private int _targetWidth = 720;
     private long _jpegQuality = 65L;
+    private int _captureBusy;
+
+    private static readonly ImageCodecInfo? JpegCodec = GetJpegCodecInfo();
 
     private const int CursorShowing = 0x00000001;
     private const int DiNormal = 0x0003;
@@ -85,7 +89,9 @@ internal sealed class ScreenCaptureService : IDisposable
             _intervalMs = Math.Max(300, intervalMs);
             if (targetWidth is > 0 and <= 1920) _targetWidth = targetWidth.Value;
             if (jpegQuality is > 0 and <= 100) _jpegQuality = jpegQuality.Value;
-            _timer = new System.Threading.Timer(CaptureCallback, null, 0, _intervalMs);
+            // First frame on thread pool so timer setup returns immediately.
+            _timer = new System.Threading.Timer(CaptureCallback, null, _intervalMs, _intervalMs);
+            ThreadPool.QueueUserWorkItem(_ => CaptureCallback(null));
         }
     }
 
@@ -106,6 +112,11 @@ internal sealed class ScreenCaptureService : IDisposable
             if (!_running) return;
         }
 
+        if (Interlocked.Exchange(ref _captureBusy, 1) == 1)
+        {
+            return;
+        }
+
         try
         {
             var (base64, width, height) = CaptureScreen();
@@ -117,6 +128,10 @@ internal sealed class ScreenCaptureService : IDisposable
         catch
         {
             // Fail silently — screen capture may not be available in some contexts
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _captureBusy, 0);
         }
     }
 
@@ -147,21 +162,18 @@ internal sealed class ScreenCaptureService : IDisposable
             using var thumbnail = new Bitmap(_targetWidth, targetHeight);
             using (var g = Graphics.FromImage(thumbnail))
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
                 g.DrawImage(fullBitmap, 0, 0, _targetWidth, targetHeight);
             }
 
             // Compress to JPEG
             using var ms = new MemoryStream();
-            var codecInfo = GetJpegCodecInfo();
-            if (codecInfo != null)
+            if (JpegCodec != null)
             {
-                var encoderParams = new EncoderParameters(1);
+                using var encoderParams = new EncoderParameters(1);
                 encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, _jpegQuality);
-                thumbnail.Save(ms, codecInfo, encoderParams);
+                thumbnail.Save(ms, JpegCodec, encoderParams);
             }
             else
             {

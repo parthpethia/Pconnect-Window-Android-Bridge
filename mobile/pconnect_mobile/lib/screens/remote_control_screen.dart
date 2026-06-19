@@ -3,7 +3,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/connection.dart';
+import '../widgets/screen_preview_webrtc.dart';
 
 /// A dedicated remote-control page:
 ///  • Top half  – live PC screen preview
@@ -36,7 +38,7 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
   void _togglePreview(bool v) {
     setState(() => _screenOn = v);
     if (v) {
-      widget.conn?.startScreenCapture(intervalMs: 800, width: 720, quality: 65);
+      widget.conn?.startScreenCapture(intervalMs: 900, width: 640, quality: 58);
     } else {
       widget.conn?.stopScreenCapture();
     }
@@ -237,17 +239,26 @@ class _PreviewPanel extends StatelessWidget {
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.3)),
       ),
       clipBehavior: Clip.antiAlias,
-      child: ValueListenableBuilder<Uint8List?>(
-        valueListenable: conn!.screenFrameNotifier,
-        builder: (context, frame, _) {
-          if (frame == null) {
-            return Center(child: CircularProgressIndicator(color: cs.primary));
+      child: ValueListenableBuilder<RTCVideoRenderer?>(
+        valueListenable: conn!.webrtcRendererNotifier,
+        builder: (context, renderer, _) {
+          if (renderer != null) {
+            return ScreenPreviewWebRtc(renderer: renderer);
           }
-          return Image.memory(
-            frame,
-            gaplessPlayback: true,
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.medium,
+          return ValueListenableBuilder<Uint8List?>(
+            valueListenable: conn!.screenFrameNotifier,
+            builder: (context, frame, _) {
+              if (frame == null) {
+                return Center(child: CircularProgressIndicator(color: cs.primary));
+              }
+              return Image.memory(
+                frame,
+                gaplessPlayback: true,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.low,
+                cacheWidth: 640,
+              );
+            },
           );
         },
       ),
@@ -482,27 +493,49 @@ class _EmbeddedKeyboard extends StatefulWidget {
 
 class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
   final _tc = TextEditingController();
-  String _lastText = '';
+  final _focusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
+    widget.conn?.resetKeyboardText();
     _tc.addListener(_onText);
+    _focusNode.addListener(_onFocusChanged);
   }
 
   @override
   void dispose() {
     _tc.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus) {
+      widget.conn?.resetKeyboardText();
+      _tc.text = '';
+    }
+  }
+
   void _onText() {
-    if (!widget.enabled) return;
+    if (!widget.enabled || widget.conn == null) return;
+    if (_tc.value.composing.isValid) return;
+
     final current = _tc.text;
-    final diff = TextDiff.compute(_lastText, current);
-    _lastText = current;
-    if (diff.backspaces == 0 && diff.inserted.isEmpty) return;
-    widget.conn?.sendInput(backspaces: diff.backspaces, text: diff.inserted);
+    final conn = widget.conn!;
+    final diff = TextDiff.compute(conn.lastKeyboardText, current);
+    
+    if (diff.backspaces == 0 && diff.inserted.isEmpty) {
+      conn.resetKeyboardText(value: current);
+      return;
+    }
+
+    if (conn.isReplaceAll(diff, conn.lastKeyboardText)) {
+      conn.sendReplaceAllText(text: current);
+    } else {
+      conn.sendInput(backspaces: diff.backspaces, text: diff.inserted);
+    }
+    conn.resetKeyboardText(value: current);
   }
 
   @override
@@ -515,6 +548,7 @@ class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
         children: [
           TextField(
             controller: _tc,
+            focusNode: _focusNode,
             maxLines: 2,
             enabled: widget.enabled,
             decoration: InputDecoration(
@@ -644,13 +678,27 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: widget.conn != null
-                    ? ValueListenableBuilder<Uint8List?>(
-                        valueListenable: widget.conn!.screenFrameNotifier,
-                        builder: (_, frame, __) {
-                          if (frame == null) {
-                            return Center(child: CircularProgressIndicator(color: cs.primary));
+                    ? ValueListenableBuilder<RTCVideoRenderer?>(
+                        valueListenable: widget.conn!.webrtcRendererNotifier,
+                        builder: (context, renderer, _) {
+                          if (renderer != null) {
+                            return ScreenPreviewWebRtc(renderer: renderer);
                           }
-                          return Image.memory(frame, gaplessPlayback: true, fit: BoxFit.contain);
+                          return ValueListenableBuilder<Uint8List?>(
+                            valueListenable: widget.conn!.screenFrameNotifier,
+                            builder: (_, frame, __) {
+                              if (frame == null) {
+                                return Center(child: CircularProgressIndicator(color: cs.primary));
+                              }
+                              return Image.memory(
+                                frame,
+                                gaplessPlayback: true,
+                                fit: BoxFit.contain,
+                                filterQuality: FilterQuality.low,
+                                cacheWidth: 640,
+                              );
+                            },
+                          );
                         },
                       )
                     : const Center(child: Text('No connection', style: TextStyle(color: Colors.white38))),

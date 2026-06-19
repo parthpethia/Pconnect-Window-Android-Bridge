@@ -6,7 +6,16 @@ namespace Pconnect.Agent.Services;
 
 internal sealed class PcActions
 {
-    private readonly KeyboardInjector _keyboard = new();
+    private readonly KeyboardInjector _keyboard;
+
+    public PcActions() : this(new KeyboardInjector())
+    {
+    }
+
+    internal PcActions(KeyboardInjector keyboard)
+    {
+        _keyboard = keyboard;
+    }
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool LockWorkStation();
@@ -61,6 +70,29 @@ internal sealed class PcActions
         if (!string.IsNullOrEmpty(text))
         {
             _keyboard.SendUnicode(text);
+        }
+    }
+
+    public void ReplaceAllText(string text)
+    {
+        _keyboard.SendCtrlA();
+        bool pasteSuccess = false;
+        try
+        {
+            pasteSuccess = _keyboard.PasteTextSafely(text);
+        }
+        catch
+        {
+            pasteSuccess = false;
+        }
+
+        if (!pasteSuccess)
+        {
+            _keyboard.SendBackspaces(1); // clear the selection
+            if (!string.IsNullOrEmpty(text))
+            {
+                _keyboard.SendUnicode(text);
+            }
         }
     }
 

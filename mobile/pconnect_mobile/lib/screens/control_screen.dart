@@ -328,27 +328,49 @@ class _KeyboardTab extends StatefulWidget {
 
 class _KeyboardTabState extends State<_KeyboardTab> {
   final _textController = TextEditingController();
-  String _lastText = '';
+  final _focusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
+    widget.conn?.resetKeyboardText();
     _textController.addListener(_onTextChanged);
+    _focusNode.addListener(_onFocusChanged);
   }
 
   @override
   void dispose() {
     _textController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus) {
+      widget.conn?.resetKeyboardText();
+      _textController.text = '';
+    }
+  }
+
   void _onTextChanged() {
-    if (!widget.enabled) return;
+    if (!widget.enabled || widget.conn == null) return;
+    if (_textController.value.composing.isValid) return;
+
     final current = _textController.text;
-    final diff = TextDiff.compute(_lastText, current);
-    _lastText = current;
-    if (diff.backspaces == 0 && diff.inserted.isEmpty) return;
-    widget.conn?.sendInput(backspaces: diff.backspaces, text: diff.inserted);
+    final conn = widget.conn!;
+    final diff = TextDiff.compute(conn.lastKeyboardText, current);
+    
+    if (diff.backspaces == 0 && diff.inserted.isEmpty) {
+      conn.resetKeyboardText(value: current);
+      return;
+    }
+
+    if (conn.isReplaceAll(diff, conn.lastKeyboardText)) {
+      conn.sendReplaceAllText(text: current);
+    } else {
+      conn.sendInput(backspaces: diff.backspaces, text: diff.inserted);
+    }
+    conn.resetKeyboardText(value: current);
   }
 
   @override
@@ -361,6 +383,7 @@ class _KeyboardTabState extends State<_KeyboardTab> {
         children: [
           TextField(
             controller: _textController,
+            focusNode: _focusNode,
             maxLines: 2,
             decoration: const InputDecoration(
               labelText: 'Type here → PC',

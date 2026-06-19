@@ -22,8 +22,10 @@ A client must authenticate before sending control commands.
 Client → PC
 
 ```json
-{ "v": 1, "type": "hello", "deviceId": "<uuid>", "token": "<optional>" }
+{ "v": 1, "type": "hello", "deviceId": "<uuid>", "token": "<optional>", "screenStreamModes": ["jpeg-v1"] }
 ```
+
+- `screenStreamModes` (optional): client-ordered list of preferred screen preview backends. Omitted on legacy clients; server treats that as `["jpeg-v1"]`.
 
 PC → Client (if token valid)
 
@@ -33,9 +35,21 @@ PC → Client (if token valid)
   "type": "helloAck",
   "pcName": "<name>",
   "role": "admin",
-  "capabilities": ["lock", "text", "launch", "show", "mouse", "keyboard", "volume", "brightness", "shutdown", "clipboard", "fileTransfer", "recentFiles", "keyCombo", "mediaKey", "screenCapture", "notification", "appList", "customCommands", "auditLog"]
+  "capabilities": ["lock", "text", "launch", "show", "mouse", "keyboard", "volume", "brightness", "shutdown", "clipboard", "fileTransfer", "recentFiles", "keyCombo", "mediaKey", "screenCapture", "notification", "appList", "customCommands", "auditLog"],
+  "screenStreamModes": ["jpeg-v1"],
+  "screenStream": "jpeg-v1"
 }
 ```
+
+- `screenStreamModes`: backends the PC can offer for screen preview (may be empty when capture is disabled, e.g. safe mode).
+- `screenStream`: negotiated active backend for this session — first entry in the client's `screenStreamModes` that the PC also supports, else the PC's default. Legacy PCs omit these fields; clients assume `jpeg-v1` when `screenCapture` is advertised.
+
+Known mode identifiers:
+
+| Mode | Description |
+|------|-------------|
+| `jpeg-v1` | Low-FPS JPEG frames over WebSocket (`screenCaptureStart` / `screenFrame`). **Production default.** |
+| `webrtc-v1` | High-performance WebRTC + H.264 stream. Uses WebRTC video tracks and a binary data channel for input events. |
 
 - `role`: `"admin"` | `"media_only"` | `"readonly"` — the device's permission role
 
@@ -92,6 +106,17 @@ Client → PC
 ```
 
 - The PC will send `backspaces` times the Backspace key, then type `text` as Unicode.
+
+### Replace All Text (large/destructive edits)
+
+Client → PC
+
+```json
+{ "v": 1, "type": "replaceAllText", "text": "hello world" }
+```
+
+- Replaces the entire focused field's content with `text`. The PC will select all text via Ctrl+A, then paste the new text using clipboard-paste.
+- **Role**: requires `admin`.
 
 ### Keyboard (virtual-key events)
 
@@ -434,9 +459,59 @@ Client → PC
 - `button`: `left` | `right` | `middle`
 - `action`: `click` | `down` | `up`
 
-### Screen Capture (low-fps preview)
+### Screen Capture
 
-#### Enable/disable capture
+If negotiated mode is `webrtc-v1`, the client does not send `screenCaptureStart`. Instead, signaling and media flow as described below. If negotiation or connection fails, it falls back to `jpeg-v1` (or `jpeg-bin-v1`).
+
+#### WebRTC Signaling Messages
+
+Signaling messages are sent over the existing WebSocket connection.
+
+Client → PC (Offer):
+```json
+{ "v": 1, "type": "webrtcOffer", "sdp": "<SDP string>" }
+```
+
+PC → Client (Answer):
+```json
+{ "v": 1, "type": "webrtcAnswer", "sdp": "<SDP string>" }
+```
+
+Both directions (ICE Candidate):
+```json
+{ "v": 1, "type": "webrtcIce", "candidate": "<candidate>", "sdpMid": "0", "sdpMLineIndex": 0 }
+```
+
+PC → Client (Ready - sent after ICE connected):
+```json
+{ "v": 1, "type": "webrtcReady" }
+```
+
+PC → Client (Fallback - sent if WebRTC connection fails or times out):
+```json
+{ "v": 1, "type": "webrtcFallback", "mode": "jpeg-v1" }
+```
+
+#### Data Channel Input Protocol
+
+Touch, gesture, and keyboard events are sent over the WebRTC data channel (labeled `"input"`, unordered, unreliable) as a 10-byte binary packet:
+
+```
+[0]     event type   (0x01=move, 0x02=button_down, 0x03=button_up, 0x04=key)
+[1-4]   x            (int32, big-endian)
+[5-8]   y            (int32, big-endian)
+[9]     button/keycode
+```
+
+- For mouse move (`0x01`): `x` and `y` are the relative deltas.
+- For mouse button down/up (`0x02`/`0x03`): `button` is `0` (left), `1` (right), or `2` (middle).
+- For key (`0x04`): `x` contains the virtual key code (lower 16 bits), `y` contains the action (`0`=press, `1`=down, `2`=up), and byte `[9]` is the extended key flag (`0` or `1`).
+
+#### Legacy/Fallback Screen Capture (low-fps preview)
+
+Production uses negotiated mode `jpeg-v1` (see handshake `screenStream`).
+
+##### Enable/disable capture
 
 Client → PC
 
@@ -448,7 +523,7 @@ Client → PC
 { "v": 1, "type": "screenCaptureStop" }
 ```
 
-#### Screen frame (pushed by PC while capture active)
+##### Screen frame (pushed by PC while capture active)
 
 PC → Client
 

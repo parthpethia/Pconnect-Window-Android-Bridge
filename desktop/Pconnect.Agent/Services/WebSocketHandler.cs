@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
@@ -9,6 +10,8 @@ namespace Pconnect.Agent.Services;
 
 internal sealed class WebSocketHandler
 {
+    internal int WebRtcTimeoutMs { get; set; } = 5000;
+
     private readonly string _shutdownPassword;
     private readonly PairingService _pairing;
     private readonly PairedDevicesStore _paired;
@@ -38,6 +41,9 @@ internal sealed class WebSocketHandler
         !_safe.IsSafeMode
             ? Capabilities
             : Capabilities.Where(static c => c is not ("screenCapture" or "customCommands")).ToArray();
+
+    private IReadOnlyList<string> AdvertisedScreenStreamModes =>
+        ScreenStreamNegotiation.AgentSupportedModes(_safe);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool LockWorkStation();
@@ -75,6 +81,41 @@ internal sealed class WebSocketHandler
         var sessionNonceBytes = RandomNumberGenerator.GetBytes(16);
         byte[]? integrityKey = null;
         var lastCmdSeq = 0;
+        IReadOnlyList<string>? lastClientScreenStreamModes = null;
+
+        WebRtcSessionService? webRtcSession = null;
+        ScreenCaptureDxgi? dxgiCapture = null;
+        H264EncoderService? h264Encoder = null;
+        Task? webRtcCaptureLoop = null;
+        CancellationTokenSource? webRtcCts = null;
+        string? negotiatedScreenStream = null;
+        var inputDispatcher = new InputDispatcher(new KeyboardInjector());
+
+        async Task HandleWebRtcFallbackAsync()
+        {
+            webRtcCts?.Cancel();
+            webRtcSession?.Dispose();
+            webRtcSession = null;
+            dxgiCapture?.Dispose();
+            dxgiCapture = null;
+            h264Encoder?.Dispose();
+            h264Encoder = null;
+
+            negotiatedScreenStream = ScreenStreamNegotiation.JpegV1;
+            await SendAsync(ws, new { v = 1, type = "webrtcFallback", mode = "jpeg-v1" }, ct);
+
+            // Transparently start the existing jpeg-v1 capture loop
+            if (!_safe.DisableScreenCapture)
+            {
+                screenCapture?.Dispose();
+                screenCapture = new ScreenCaptureService((b64, w, h) =>
+                {
+                    _ = SendScreenFrameAsync(ws, b64, w, h, ct);
+                });
+                screenCapture.Start(1000, 720, 65);
+                _auditLog.Log(deviceName, "webrtcFallback:screenCaptureStart");
+            }
+        }
 
         bool PassesClientPolicy(Dictionary<string, JsonElement> m, out string? err)
         {
@@ -172,6 +213,8 @@ internal sealed class WebSocketHandler
                             continue;
                         }
 
+                        lastClientScreenStreamModes = msg.GetStringArrayOrNull("screenStreamModes");
+
                         deviceId = msg.GetStringOrNull("deviceId");
                         var token = msg.GetStringOrNull("token");
                         deviceName = msg.GetStringOrNull("deviceName");
@@ -191,13 +234,19 @@ internal sealed class WebSocketHandler
 
                             _onDeviceAuthed?.Invoke(deviceId, deviceName);
                             _auditLog.Log(deviceName, "connected");
+                            var clientStreamModes = lastClientScreenStreamModes;
+                            var serverStreamModes = AdvertisedScreenStreamModes;
+                            var negotiatedStream = ScreenStreamNegotiation.Negotiate(clientStreamModes, serverStreamModes);
                             await SendAsync(ws, new
                             {
                                 v = 1, type = "helloAck",
                                 pcName = Environment.MachineName,
                                 role = deviceRole,
-                                capabilities = AdvertisedCapabilities
+                                capabilities = AdvertisedCapabilities,
+                                screenStreamModes = serverStreamModes,
+                                screenStream = negotiatedStream,
                             }, ct);
+                            negotiatedScreenStream = negotiatedStream;
                             await StartNotificationListenerAsync();
 
                             // Start clipboard monitoring (PC → phone sync)
@@ -234,6 +283,8 @@ internal sealed class WebSocketHandler
                             continue;
                         }
 
+                        lastClientScreenStreamModes = msg.GetStringArrayOrNull("screenStreamModes") ?? lastClientScreenStreamModes;
+
                         deviceId = msg.GetStringOrNull("deviceId") ?? deviceId;
                         var code = msg.GetStringOrNull("code");
                         deviceName = msg.GetStringOrNull("deviceName");
@@ -263,13 +314,19 @@ internal sealed class WebSocketHandler
                         _auditLog.Log(deviceName, "paired");
 
                         await SendAsync(ws, new { v = 1, type = "paired", deviceId, token, role = deviceRole }, ct);
+                        var clientStreamModesPair = lastClientScreenStreamModes;
+                        var serverStreamModesPair = AdvertisedScreenStreamModes;
+                        var negotiatedStreamPair = ScreenStreamNegotiation.Negotiate(clientStreamModesPair, serverStreamModesPair);
                         await SendAsync(ws, new
                         {
                             v = 1, type = "helloAck",
                             pcName = Environment.MachineName,
                             role = deviceRole,
-                            capabilities = AdvertisedCapabilities
+                            capabilities = AdvertisedCapabilities,
+                            screenStreamModes = serverStreamModesPair,
+                            screenStream = negotiatedStreamPair,
                         }, ct);
+                        negotiatedScreenStream = negotiatedStreamPair;
                         await StartNotificationListenerAsync();
 
                         // Start clipboard monitoring (PC → phone sync)
@@ -363,6 +420,14 @@ internal sealed class WebSocketHandler
                         var text = msg.GetStringOrNull("text") ?? string.Empty;
                         _pc.TypeText(backspaces, text);
                         _auditLog.Log(deviceName, "input");
+                        await SendAsync(ws, new { v = 1, type = "ok" }, ct);
+                        break;
+
+                    case "replacealltext":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        var replaceText = msg.GetStringOrNull("text") ?? string.Empty;
+                        _pc.ReplaceAllText(replaceText);
+                        _auditLog.Log(deviceName, "replaceAllText");
                         await SendAsync(ws, new { v = 1, type = "ok" }, ct);
                         break;
 
@@ -636,6 +701,166 @@ internal sealed class WebSocketHandler
                         }, ct);
                         break;
 
+                    // ── New: WebRTC ──
+                    case "webrtcoffer":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        if (negotiatedScreenStream != ScreenStreamNegotiation.WebRtcV1) break;
+                        var offerSdp = msg.GetStringOrNull("sdp");
+                        if (offerSdp == null) break;
+
+                        try
+                        {
+                            webRtcCts?.Cancel();
+                            webRtcCaptureLoop = null;
+                            webRtcSession?.Dispose();
+                            dxgiCapture?.Dispose();
+
+                            webRtcCts = new CancellationTokenSource();
+                            var localCts = webRtcCts;
+
+                            dxgiCapture = new ScreenCaptureDxgi();
+                            h264Encoder = new H264EncoderService();
+                            h264Encoder.Initialize((int)dxgiCapture.Width, (int)dxgiCapture.Height, 30, 2000, dxgiCapture.Device);
+
+                            bool isConnected = false;
+                            bool isFailed = false;
+
+                            webRtcSession = new WebRtcSessionService(
+                                onInputPacket: (data) =>
+                                {
+                                    inputDispatcher.Dispatch(data);
+                                },
+                                onIceCandidate: async (candidate) =>
+                                {
+                                    await SendAsync(ws, new
+                                    {
+                                        v = 1,
+                                        type = "webrtcIce",
+                                        candidate = candidate,
+                                        sdpMid = "0",
+                                        sdpMLineIndex = 0
+                                    }, ct);
+                                },
+                                onConnected: () =>
+                                {
+                                    lock (localCts)
+                                    {
+                                        if (isConnected || isFailed) return;
+                                        isConnected = true;
+                                    }
+                                    Console.WriteLine("[WebSocketHandler] WebRTC connected. Starting capture loop.");
+                                    
+                                    webRtcCaptureLoop = Task.Run(async () =>
+                                    {
+                                        try
+                                        {
+                                            await SendAsync(ws, new { v = 1, type = "webrtcReady" }, ct);
+
+                                            while (!localCts.IsCancellationRequested && ws.State == WebSocketState.Open)
+                                            {
+                                                var frame = await dxgiCapture.AcquireNextFrameAsync(33); // ~30 fps
+                                                if (frame == null)
+                                                {
+                                                    await Task.Delay(10, localCts.Token);
+                                                    continue;
+                                                }
+
+                                                try
+                                                {
+                                                    if (h264Encoder != null && webRtcSession != null)
+                                                    {
+                                                        ReadOnlyMemory<byte> nals;
+                                                        if (h264Encoder.UseGpuPath)
+                                                        {
+                                                            nals = h264Encoder.EncodeGpuTexture(frame.Texture, (int)dxgiCapture.Width, (int)dxgiCapture.Height, false);
+                                                        }
+                                                        else
+                                                        {
+                                                            byte[]? rawBytes = dxgiCapture.CopyFrameToCpu(frame.Texture);
+                                                            if (rawBytes != null)
+                                                            {
+                                                                nals = h264Encoder.Encode(rawBytes, (int)dxgiCapture.Width, (int)dxgiCapture.Height, false);
+                                                            }
+                                                            else
+                                                            {
+                                                                nals = ReadOnlyMemory<byte>.Empty;
+                                                            }
+                                                        }
+
+                                                        if (nals.Length > 0)
+                                                        {
+                                                            webRtcSession.SendVideoFrame(nals, 33);
+                                                        }
+                                                    }
+                                                }
+                                                finally
+                                                {
+                                                    frame.Release();
+                                                }
+
+                                                await Task.Delay(20, localCts.Token);
+                                            }
+                                        }
+                                        catch (OperationCanceledException) { }
+                                        catch (Exception ex)
+                                        {
+                                            Console.WriteLine($"[WebSocketHandler] WebRTC capture loop error: {ex.Message}");
+                                        }
+                                    });
+                                },
+                                onFailed: async (reason) =>
+                                {
+                                    lock (localCts)
+                                    {
+                                        if (isFailed) return;
+                                        isFailed = true;
+                                    }
+                                    Console.WriteLine($"[WebSocketHandler] WebRTC connection failed: {reason}");
+                                    await HandleWebRtcFallbackAsync();
+                                }
+                            );
+
+                            string answerSdp = await webRtcSession.ProcessOfferAndCreateAnswer(offerSdp);
+                            await SendAsync(ws, new { v = 1, type = "webrtcAnswer", sdp = answerSdp }, ct);
+
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(WebRtcTimeoutMs);
+                                bool needsFallback = false;
+                                lock (localCts)
+                                {
+                                    if (!isConnected && !isFailed)
+                                    {
+                                        isFailed = true;
+                                        needsFallback = true;
+                                    }
+                                }
+                                if (needsFallback)
+                                {
+                                    Console.WriteLine("[WebSocketHandler] WebRTC connection timeout. Falling back to JPEG.");
+                                    await HandleWebRtcFallbackAsync();
+                                }
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            await SendAsync(ws, new { v = 1, type = "webrtcDebugError", message = ex.ToString() }, ct);
+                            Console.WriteLine($"[WebSocketHandler] Failed to setup WebRTC: {ex.Message}");
+                            await HandleWebRtcFallbackAsync();
+                        }
+                        break;
+
+                    case "webrtcice":
+                        if (!RequireAdmin()) break;
+                        var clientCandidate = msg.GetStringOrNull("candidate");
+                        var sdpMid = msg.GetStringOrNull("sdpMid");
+                        var sdpMLineIndex = msg.GetIntOrDefault("sdpMLineIndex", 0);
+                        if (clientCandidate != null)
+                        {
+                            webRtcSession?.AddIceCandidate(clientCandidate, sdpMid, sdpMLineIndex);
+                        }
+                        break;
+
                     // ── New: Screen capture ──
                     case "screencapturestart":
                         if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
@@ -648,14 +873,9 @@ internal sealed class WebSocketHandler
                         var interval = msg.GetIntOrDefault("intervalMs", 1000);
                         var captureWidth = msg.GetIntOrDefault("width", 720);
                         var captureQuality = msg.GetIntOrDefault("quality", 65);
-                        screenCapture = new ScreenCaptureService(async (b64, w, h) =>
+                        screenCapture = new ScreenCaptureService((b64, w, h) =>
                         {
-                            try
-                            {
-                                if (ws.State == WebSocketState.Open)
-                                    await SendAsync(ws, new { v = 1, type = "screenFrame", data = b64, width = w, height = h }, ct);
-                            }
-                            catch { /* connection may have closed */ }
+                            _ = SendScreenFrameAsync(ws, b64, w, h, ct);
                         });
                         screenCapture.Start(interval, captureWidth, captureQuality);
                         _auditLog.Log(deviceName, "screenCaptureStart");
@@ -663,6 +883,14 @@ internal sealed class WebSocketHandler
                         break;
 
                     case "screencapturestop":
+                        webRtcCts?.Cancel();
+                        webRtcSession?.Dispose();
+                        webRtcSession = null;
+                        dxgiCapture?.Dispose();
+                        dxgiCapture = null;
+                        h264Encoder?.Dispose();
+                        h264Encoder = null;
+
                         screenCapture?.Dispose();
                         screenCapture = null;
                         await SendAsync(ws, new { v = 1, type = "ok" }, ct);
@@ -779,6 +1007,11 @@ internal sealed class WebSocketHandler
         }
         finally
         {
+            webRtcCts?.Cancel();
+            webRtcSession?.Dispose();
+            dxgiCapture?.Dispose();
+            h264Encoder?.Dispose();
+
             screenCapture?.Dispose();
             clipboardPollTimer?.Dispose();
             clipboardMonitor?.Dispose();
@@ -859,6 +1092,31 @@ internal sealed class WebSocketHandler
         var json = JsonSerializer.Serialize(obj);
         var bytes = Encoding.UTF8.GetBytes(json);
         return ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+    }
+
+    /// <summary>
+    /// Screen frames are large; avoid JSON serializer overhead and do not block the capture thread.
+    /// </summary>
+    private static Task SendScreenFrameAsync(WebSocket ws, string b64, int width, int height, CancellationToken ct)
+    {
+        return Task.Run(async () =>
+        {
+            try
+            {
+                if (ws.State != WebSocketState.Open) return;
+                var json = string.Concat(
+                    "{\"v\":1,\"type\":\"screenFrame\",\"data\":\"",
+                    b64,
+                    "\",\"width\":",
+                    width.ToString(CultureInfo.InvariantCulture),
+                    ",\"height\":",
+                    height.ToString(CultureInfo.InvariantCulture),
+                    "}");
+                var bytes = Encoding.UTF8.GetBytes(json);
+                await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+            }
+            catch { /* connection may have closed */ }
+        }, ct);
     }
 }
 

@@ -14,8 +14,13 @@ internal sealed class PairedDevicesStore
     private Dictionary<string, string> _rolesByDeviceId = new(StringComparer.Ordinal);
     private Dictionary<string, bool> _autoLockByDeviceId = new(StringComparer.Ordinal);
 
-    public PairedDevicesStore()
+    public PairedDevicesStore(string? customPath = null)
     {
+        if (customPath != null)
+        {
+            _path = customPath;
+            return;
+        }
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Pconnect");
         Directory.CreateDirectory(dir);
         _path = Path.Combine(dir, "paired-devices.json");

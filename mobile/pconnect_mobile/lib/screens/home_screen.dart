@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'app_launcher_screen.dart';
 
 import '../services/connection.dart';
 import '../main.dart';
+import '../widgets/screen_preview_webrtc.dart';
 
 class HomeScreen extends StatefulWidget {
   final PcConnection? conn;
@@ -208,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onToggle: (v) {
               setState(() => _screenPreviewOn = v);
               if (v) {
-                conn?.startScreenCapture(intervalMs: 1000, width: 720, quality: 65);
+                conn?.startScreenCapture(intervalMs: 1200, width: 480, quality: 52);
               } else {
                 conn?.stopScreenCapture();
               }
@@ -464,26 +466,47 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
           ],
         ),
         if (widget.screenPreviewOn && widget.connected && conn != null)
-          ValueListenableBuilder<Uint8List?>(
-            valueListenable: conn.screenFrameNotifier,
-            builder: (context, frame, _) {
-              if (frame == null) {
-                return Container(
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
+          ValueListenableBuilder<RTCVideoRenderer?>(
+            valueListenable: conn.webrtcRendererNotifier,
+            builder: (context, renderer, _) {
+              if (renderer != null) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: ValueListenableBuilder<RTCVideoValue>(
+                    valueListenable: renderer,
+                    builder: (context, value, _) {
+                      final aspect = value.aspectRatio > 0 ? value.aspectRatio : 16 / 9;
+                      return AspectRatio(
+                        aspectRatio: aspect,
+                        child: ScreenPreviewWebRtc(renderer: renderer),
+                      );
+                    },
                   ),
-                  child: const Center(child: CircularProgressIndicator()),
                 );
               }
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.memory(
-                  frame,
-                  gaplessPlayback: true,
-                  filterQuality: FilterQuality.medium,
-                ),
+              return ValueListenableBuilder<Uint8List?>(
+                valueListenable: conn.screenFrameNotifier,
+                builder: (context, frame, _) {
+                  if (frame == null) {
+                    return Container(
+                      height: 120,
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(
+                      frame,
+                      gaplessPlayback: true,
+                      filterQuality: FilterQuality.low,
+                      cacheWidth: 480,
+                    ),
+                  );
+                },
               );
             },
           ),

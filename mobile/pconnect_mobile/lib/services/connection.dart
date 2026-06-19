@@ -6,8 +6,12 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+
 import '../utils/notifications.dart';
+import 'input_channel.dart';
 import 'pc_websocket.dart';
+import 'screen_stream_modes.dart';
 import 'session_crypto.dart';
 
 const int kWsPortDefault = 47821;
@@ -31,6 +35,10 @@ class ConnectionStatus {
   final String? pcName;
   final String? error;
   final String? role;
+  /// Negotiated screen preview backend (e.g. `jpeg-v1`). Null when capture unavailable.
+  final String? screenStream;
+  /// Backends the PC advertised in `helloAck`.
+  final List<String> screenStreamModes;
 
   const ConnectionStatus({
     required this.connected,
@@ -38,9 +46,18 @@ class ConnectionStatus {
     this.pcName,
     this.error,
     this.role,
+    this.screenStream,
+    this.screenStreamModes = const [],
   });
 
   static const disconnected = ConnectionStatus(connected: false, needsPairing: false);
+
+  String get effectiveScreenStream => screenStream ?? ScreenStreamModes.jpegV1;
+
+  bool get screenPreviewAvailable =>
+      screenStream != null ||
+      screenStreamModes.contains(ScreenStreamModes.jpegV1) ||
+      screenStreamModes.contains(ScreenStreamModes.webRtcV1);
 }
 
 class FileTransferProgress {
@@ -115,6 +132,14 @@ class PcConnection {
   final ValueNotifier<List<LogEntry>> logEntriesNotifier = ValueNotifier([]);
   final ValueNotifier<Uint8List?> screenFrameNotifier = ValueNotifier(null);
 
+  RTCPeerConnection? _rtcPeer;
+  RTCVideoRenderer? _rtcRenderer;
+  RTCDataChannel? _inputChannel;
+  InputChannel? inputChannel;
+  final ValueNotifier<RTCVideoRenderer?> webrtcRendererNotifier = ValueNotifier(null);
+  bool _webrtcActive = false;
+  Timer? _webrtcTimeout;
+
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
 
@@ -136,6 +161,7 @@ class PcConnection {
 
   Completer<Map<String, dynamic>>? _diagCompleter;
   Completer<String?>? _pairCompleter;
+  int _screenFrameGen = 0;
 
   PcConnection({required this.deviceId});
 
@@ -145,6 +171,26 @@ class PcConnection {
     if (!_statusController.isClosed) {
       _statusController.add(s);
     }
+  }
+
+  ConnectionStatus _connectionStatusFromHelloAck(Map<String, dynamic> obj) {
+    final modesRaw = obj['screenStreamModes'];
+    final modes = <String>[];
+    if (modesRaw is List) {
+      for (final item in modesRaw) {
+        if (item is String && item.isNotEmpty) {
+          modes.add(item);
+        }
+      }
+    }
+    return ConnectionStatus(
+      connected: true,
+      needsPairing: false,
+      pcName: obj['pcName'] as String?,
+      role: obj['role'] as String?,
+      screenStream: obj['screenStream'] as String?,
+      screenStreamModes: modes,
+    );
   }
 
   Future<void> connect({required String host, required int port, required String? token, int? wssPort}) async {
@@ -197,6 +243,7 @@ class PcConnection {
         'proto': kClientProto,
         'clientVersion': kClientVersion,
         'deviceId': deviceId,
+        'screenStreamModes': ScreenStreamModes.clientPreference(),
         if (_token != null) 'token': _token,
       });
     } catch (e) {
@@ -238,12 +285,7 @@ class PcConnection {
           await _armIntegrityKey();
           _reconnectDelayMs = 500;
           _needsPairing = false;
-          _setStatus(ConnectionStatus(
-            connected: true,
-            needsPairing: false,
-            pcName: obj['pcName'] as String?,
-            role: obj['role'] as String?,
-          ));
+          _setStatus(_connectionStatusFromHelloAck(obj));
           break;
 
         case 'authRequired':
@@ -295,7 +337,11 @@ class PcConnection {
           try {
             final data = obj['data'] as String?;
             if (data != null) {
-              screenFrameNotifier.value = base64Decode(data);
+              final gen = ++_screenFrameGen;
+              final decoded = await compute(_decodeScreenFrameBase64, data);
+              if (gen == _screenFrameGen && decoded != null) {
+                screenFrameNotifier.value = decoded;
+              }
             }
           } catch (_) {}
           break;
@@ -365,11 +411,46 @@ class PcConnection {
             pcName: cur.pcName,
             error: msg,
             role: cur.role,
+            screenStream: cur.screenStream,
+            screenStreamModes: cur.screenStreamModes,
           ));
           // Fail any pending pair() call on error
           if (_pairCompleter != null && !_pairCompleter!.isCompleted) {
             _pairCompleter!.complete(null);
           }
+          break;
+
+        case 'webrtcAnswer':
+          try {
+            final sdp = obj['sdp'] as String?;
+            final peer = _rtcPeer;
+            if (sdp != null && peer != null) {
+              await peer.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+            }
+          } catch (_) {}
+          break;
+
+        case 'webrtcIce':
+          try {
+            final candidate = obj['candidate'] as String?;
+            final sdpMid = obj['sdpMid'] as String?;
+            final sdpMLineIndex = (obj['sdpMLineIndex'] as num?)?.toInt() ?? 0;
+            final peer = _rtcPeer;
+            if (candidate != null && peer != null) {
+              await peer.addCandidate(RTCIceCandidate(candidate, sdpMid, sdpMLineIndex));
+            }
+          } catch (_) {}
+          break;
+
+        case 'webrtcReady':
+          _webrtcTimeout?.cancel();
+          _webrtcTimeout = null;
+          _webrtcActive = true;
+          break;
+
+        case 'webrtcFallback':
+          await _fallbackFromWebRtc();
+          _send({'v': 1, 'type': 'screenCaptureStart', 'intervalMs': 1000, 'width': 720, 'quality': 65});
           break;
       }
     } catch (e) {
@@ -379,6 +460,8 @@ class PcConnection {
         pcName: currentStatus.pcName,
         error: 'Invalid message from PC',
         role: currentStatus.role,
+        screenStream: currentStatus.screenStream,
+        screenStreamModes: currentStatus.screenStreamModes,
       ));
     }
   }
@@ -418,6 +501,7 @@ class PcConnection {
       'deviceId': deviceId,
       'deviceName': deviceName,
       'code': code,
+      'screenStreamModes': ScreenStreamModes.clientPreference(),
     });
     try {
       return await c.future.timeout(const Duration(seconds: 5));
@@ -435,6 +519,29 @@ class PcConnection {
     _send({'v': 1, 'type': 'input', 'backspaces': backspaces, 'text': text});
   }
 
+  String _lastKeyboardText = '';
+  String get lastKeyboardText => _lastKeyboardText;
+
+  void resetKeyboardText({String value = ''}) {
+    _lastKeyboardText = value;
+  }
+
+  static const int _replaceAllBackspaceThreshold = 5;
+
+  bool isReplaceAll(TextDiff diff, String oldText) {
+    if (diff.backspaces >= _replaceAllBackspaceThreshold) {
+      return true;
+    }
+    if (diff.backspaces == oldText.length && oldText.isNotEmpty) {
+      return true;
+    }
+    return false;
+  }
+
+  void sendReplaceAllText({required String text}) {
+    _send({'v': 1, 'type': 'replaceAllText', 'text': text});
+  }
+
   void launchApp(String command, {List<String>? args}) {
     final argCanon = (args == null || args.isEmpty) ? '' : args.join('\x1e');
     _send(_withMac('launch|$command|$argCanon', {'v': 1, 'type': 'launch', 'command': command, if (args != null) 'args': args}));
@@ -446,27 +553,68 @@ class PcConnection {
 
   void mouseMove({required int dx, required int dy}) {
     if (dx == 0 && dy == 0) return;
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendMouseMove(dx, dy);
+      return;
+    }
     _send({'v': 1, 'type': 'mouseMove', 'dx': dx, 'dy': dy});
   }
 
   void mouseScroll({required int dy}) {
     if (dy == 0) return;
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendScroll(dy);
+      return;
+    }
     _send({'v': 1, 'type': 'mouseScroll', 'dy': dy});
   }
 
   void mouseButton({required String button, required String action}) {
+    final ic = inputChannel;
+    if (ic != null) {
+      final btnMap = const {'left': 0, 'right': 1, 'middle': 2};
+      final btnCode = btnMap[button];
+      if (btnCode != null) {
+        if (action == 'down') {
+          ic.sendButtonDown(btnCode);
+        } else if (action == 'up') {
+          ic.sendButtonUp(btnCode);
+        } else if (action == 'click') {
+          ic.sendButtonDown(btnCode);
+          ic.sendButtonUp(btnCode);
+        }
+      }
+      return;
+    }
     _send({'v': 1, 'type': 'mouseButton', 'button': button, 'action': action});
   }
 
   void keyPress({required int vk, bool extended = false}) {
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendKey(vk, 0, extended ? 1 : 0);
+      return;
+    }
     _send({'v': 1, 'type': 'key', 'vk': vk, 'action': 'press', if (extended) 'extended': true});
   }
 
   void keyDown({required int vk, bool extended = false}) {
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendKey(vk, 1, extended ? 1 : 0);
+      return;
+    }
     _send({'v': 1, 'type': 'key', 'vk': vk, 'action': 'down', if (extended) 'extended': true});
   }
 
   void keyUp({required int vk, bool extended = false}) {
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendKey(vk, 2, extended ? 1 : 0);
+      return;
+    }
     _send({'v': 1, 'type': 'key', 'vk': vk, 'action': 'up', if (extended) 'extended': true});
   }
 
@@ -500,12 +648,106 @@ class PcConnection {
 
   // ── Screen Capture ──
   void startScreenCapture({int intervalMs = 1000, int width = 720, int quality = 65}) {
+    final mode = currentStatus.effectiveScreenStream;
+    if (mode == ScreenStreamModes.webRtcV1) {
+      _startWebRtc();
+      return;
+    }
+    if (mode != ScreenStreamModes.jpegV1) return;
     _send({'v': 1, 'type': 'screenCaptureStart', 'intervalMs': intervalMs, 'width': width, 'quality': quality});
   }
 
   void stopScreenCapture() {
+    if (_webrtcActive) {
+      _fallbackFromWebRtc();
+    }
     _send({'v': 1, 'type': 'screenCaptureStop'});
+    _screenFrameGen++;
     screenFrameNotifier.value = null;
+  }
+
+  Future<void> _startWebRtc() async {
+    try {
+      await _fallbackFromWebRtc();
+
+      final renderer = RTCVideoRenderer();
+      await renderer.initialize();
+      _rtcRenderer = renderer;
+
+      final peer = await createPeerConnection({
+        'iceServers': [],
+        'sdpSemantics': 'unified-plan',
+      });
+      _rtcPeer = peer;
+
+      peer.onTrack = (event) {
+        if (event.track.kind == 'video') {
+          renderer.srcObject = event.streams[0];
+          webrtcRendererNotifier.value = renderer;
+        }
+      };
+
+      peer.onIceCandidate = (candidate) {
+        _send({
+          'v': 1,
+          'type': 'webrtcIce',
+          'candidate': candidate.candidate,
+          'sdpMid': candidate.sdpMid,
+          'sdpMLineIndex': candidate.sdpMLineIndex,
+        });
+      };
+
+      final dcInit = RTCDataChannelInit()
+        ..ordered = false
+        ..maxRetransmits = 0;
+      
+      final channel = await peer.createDataChannel('input', dcInit);
+      _inputChannel = channel;
+      inputChannel = InputChannel(channel);
+
+      final offer = await peer.createOffer({});
+      await peer.setLocalDescription(offer);
+
+      _send({
+        'v': 1,
+        'type': 'webrtcOffer',
+        'sdp': offer.sdp,
+      });
+
+      _webrtcTimeout = Timer(const Duration(seconds: 5), () {
+        _fallbackFromWebRtc();
+      });
+    } catch (_) {
+      await _fallbackFromWebRtc();
+    }
+  }
+
+  Future<void> _fallbackFromWebRtc() async {
+    _webrtcTimeout?.cancel();
+    _webrtcTimeout = null;
+
+    final renderer = _rtcRenderer;
+    _rtcRenderer = null;
+    webrtcRendererNotifier.value = null;
+
+    final peer = _rtcPeer;
+    _rtcPeer = null;
+
+    final channel = _inputChannel;
+    _inputChannel = null;
+    inputChannel = null;
+
+    _webrtcActive = false;
+
+    if (channel != null) {
+      unawaited(channel.close());
+    }
+    if (peer != null) {
+      unawaited(peer.close());
+    }
+    if (renderer != null) {
+      unawaited(renderer.dispose());
+    }
   }
 
   // ── App List ──
@@ -600,6 +842,8 @@ class PcConnection {
       error: preservePairing ? null : reason,
       pcName: currentStatus.pcName,
       role: currentStatus.role,
+      screenStream: currentStatus.screenStream,
+      screenStreamModes: currentStatus.screenStreamModes,
     ));
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(Duration(milliseconds: _reconnectDelayMs), () {
@@ -617,6 +861,10 @@ class PcConnection {
     _channel?.sink.close();
     _statusController.close();
     statusNotifier.dispose();
+    webrtcRendererNotifier.dispose();
+    _webrtcTimeout?.cancel();
+    _rtcRenderer?.dispose();
+    _rtcPeer?.close();
   }
 }
 
@@ -704,5 +952,13 @@ class TextDiff {
       prefix++;
     }
     return TextDiff(oldText.substring(prefix).length, newText.substring(prefix));
+  }
+}
+
+Uint8List? _decodeScreenFrameBase64(String data) {
+  try {
+    return base64Decode(data);
+  } catch (_) {
+    return null;
   }
 }

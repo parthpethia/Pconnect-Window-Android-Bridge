@@ -1,8 +1,10 @@
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
 
 namespace Pconnect.Agent.Services;
 
-internal sealed class KeyboardInjector
+internal class KeyboardInjector
 {
     private const int INPUT_MOUSE = 0;
     private const int INPUT_KEYBOARD = 1;
@@ -22,6 +24,9 @@ internal sealed class KeyboardInjector
     private const ushort VK_BACK = 0x08;
     private const ushort VK_LWIN = 0x5B;
     private const ushort VK_L = 0x4C;
+    private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_A = 0x41;
+    private const ushort VK_V = 0x56;
 
     // IMPORTANT: INPUT must match the Win32 INPUT struct size/layout.
     // On 64-bit Windows, sizeof(INPUT) is 40 bytes because the union must be
@@ -73,7 +78,7 @@ internal sealed class KeyboardInjector
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-    public void MoveMouseBy(int dx, int dy)
+    public virtual void MoveMouseBy(int dx, int dy)
     {
         if (dx == 0 && dy == 0)
         {
@@ -88,7 +93,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void ScrollWheel(int wheelDelta)
+    public virtual void ScrollWheel(int wheelDelta)
     {
         if (wheelDelta == 0)
         {
@@ -103,14 +108,14 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void LeftDown() => MouseButton(MOUSEEVENTF_LEFTDOWN);
-    public void LeftUp() => MouseButton(MOUSEEVENTF_LEFTUP);
-    public void RightDown() => MouseButton(MOUSEEVENTF_RIGHTDOWN);
-    public void RightUp() => MouseButton(MOUSEEVENTF_RIGHTUP);
-    public void MiddleDown() => MouseButton(MOUSEEVENTF_MIDDLEDOWN);
-    public void MiddleUp() => MouseButton(MOUSEEVENTF_MIDDLEUP);
+    public virtual void LeftDown() => MouseButton(MOUSEEVENTF_LEFTDOWN);
+    public virtual void LeftUp() => MouseButton(MOUSEEVENTF_LEFTUP);
+    public virtual void RightDown() => MouseButton(MOUSEEVENTF_RIGHTDOWN);
+    public virtual void RightUp() => MouseButton(MOUSEEVENTF_RIGHTUP);
+    public virtual void MiddleDown() => MouseButton(MOUSEEVENTF_MIDDLEDOWN);
+    public virtual void MiddleUp() => MouseButton(MOUSEEVENTF_MIDDLEUP);
 
-    public void LeftClick()
+    public virtual void LeftClick()
     {
         var inputs = new[]
         {
@@ -120,7 +125,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void RightClick()
+    public virtual void RightClick()
     {
         var inputs = new[]
         {
@@ -130,7 +135,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void MiddleClick()
+    public virtual void MiddleClick()
     {
         var inputs = new[]
         {
@@ -140,7 +145,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void SendVk(ushort vk)
+    public virtual void SendVk(ushort vk)
     {
         var inputs = new[]
         {
@@ -151,7 +156,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void SendVkDown(ushort vk, bool extended)
+    public virtual void SendVkDown(ushort vk, bool extended)
     {
         var inputs = new[]
         {
@@ -161,7 +166,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void SendVkUp(ushort vk, bool extended)
+    public virtual void SendVkUp(ushort vk, bool extended)
     {
         var inputs = new[]
         {
@@ -171,7 +176,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void SendWinL()
+    public virtual void SendWinL()
     {
         var inputs = new[]
         {
@@ -184,7 +189,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void SendBackspaces(int count)
+    public virtual void SendBackspaces(int count)
     {
         if (count <= 0)
         {
@@ -202,7 +207,7 @@ internal sealed class KeyboardInjector
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    public void SendUnicode(string text)
+    public virtual void SendUnicode(string text)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -219,6 +224,164 @@ internal sealed class KeyboardInjector
         }
 
         _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    public virtual void SendCtrlA()
+    {
+        var inputs = new[]
+        {
+            Key(VK_CONTROL, '\0', 0),
+            Key(VK_A, '\0', 0),
+            Key(VK_A, '\0', KEYEVENTF_KEYUP),
+            Key(VK_CONTROL, '\0', KEYEVENTF_KEYUP),
+        };
+
+        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    public virtual void SendCtrlV()
+    {
+        var inputs = new[]
+        {
+            Key(VK_CONTROL, '\0', 0),
+            Key(VK_V, '\0', 0),
+            Key(VK_V, '\0', KEYEVENTF_KEYUP),
+            Key(VK_CONTROL, '\0', KEYEVENTF_KEYUP),
+        };
+
+        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    public virtual bool PasteTextSafely(string text)
+    {
+        bool result = false;
+        var thread = new Thread(() =>
+        {
+            result = PasteTextSafelyInternal(text);
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        bool joined = thread.Join(TimeSpan.FromSeconds(3)); // Bounded wait
+        return joined && result;
+    }
+
+    private bool PasteTextSafelyInternal(string text)
+    {
+        IDataObject backupData = null;
+        Dictionary<string, object> savedFormats = null;
+        const int retries = 3;
+
+        // 1. Capture original clipboard with retries
+        bool getSuccess = false;
+        for (int i = 0; i < retries; i++)
+        {
+            try
+            {
+                backupData = Clipboard.GetDataObject();
+                savedFormats = new Dictionary<string, object>();
+                if (backupData != null)
+                {
+                    string[] formats = backupData.GetFormats(false);
+                    foreach (string format in formats)
+                    {
+                        try
+                        {
+                            savedFormats[format] = backupData.GetData(format);
+                        }
+                        catch
+                        {
+                            // ignore individual format read failure
+                        }
+                    }
+                }
+                getSuccess = true;
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (i == retries - 1)
+                {
+                    Console.WriteLine($"[KeyboardInjector] Clipboard get failed after retries: {ex.Message}");
+                }
+                Thread.Sleep(50);
+            }
+        }
+
+        if (!getSuccess)
+        {
+            return false;
+        }
+
+        // 2. Set the clipboard to text with retries
+        bool setSuccess = false;
+        for (int i = 0; i < retries; i++)
+        {
+            try
+            {
+                Clipboard.SetText(text);
+                setSuccess = true;
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (i == retries - 1)
+                {
+                    Console.WriteLine($"[KeyboardInjector] Clipboard set failed after retries: {ex.Message}");
+                }
+                Thread.Sleep(50);
+            }
+        }
+
+        if (!setSuccess)
+        {
+            return false;
+        }
+
+        // 3. Send Ctrl+V
+        try
+        {
+            SendCtrlV();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[KeyboardInjector] SendCtrlV failed: {ex.Message}");
+            return false;
+        }
+
+        // 4. Wait for application to process Ctrl+V
+        Thread.Sleep(200);
+
+        // 5. Restore the original clipboard with retries
+        for (int i = 0; i < retries; i++)
+        {
+            try
+            {
+                if (savedFormats != null && savedFormats.Count > 0)
+                {
+                    DataObject restoreObject = new DataObject();
+                    foreach (var kvp in savedFormats)
+                    {
+                        restoreObject.SetData(kvp.Key, kvp.Value);
+                    }
+                    Clipboard.SetDataObject(restoreObject, true);
+                }
+                else
+                {
+                    Clipboard.Clear();
+                }
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (i == retries - 1)
+                {
+                    Console.WriteLine($"[KeyboardInjector] Clipboard restore failed after retries: {ex.Message}");
+                }
+                Thread.Sleep(50);
+            }
+        }
+
+        return true;
     }
 
     private static INPUT Key(ushort vk, char scan, uint flags)
