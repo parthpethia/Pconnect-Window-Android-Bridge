@@ -1159,6 +1159,65 @@ public sealed class WebRtcFallbackTests
         IntPtr vtable = Marshal.ReadIntPtr(obj);
         return Marshal.ReadIntPtr(vtable, index * IntPtr.Size);
     }
+
+    [Fact]
+    public void Profile_Bicubic_vs_Bilinear_CPU_Resizing()
+    {
+        // 1080p source image
+        int srcW = 1920;
+        int srcH = 1080;
+        using var srcBmp = new System.Drawing.Bitmap(srcW, srcH, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+        
+        var targets = new[] { 720, 1080, 1440 }; // 720p, 1080p, 1440p
+        var results = new System.Text.StringBuilder();
+        results.AppendLine("CPU Resizing Profiling (Bilinear vs HighQualityBicubic) - 100 iterations:");
+
+        foreach (var targetW in targets)
+        {
+            double ratio = (double)targetW / srcW;
+            int targetH = (int)(srcH * ratio);
+
+            using var destBmp = new System.Drawing.Bitmap(targetW, targetH, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+
+            // Bilinear
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 100; i++)
+            {
+                using (var g = System.Drawing.Graphics.FromImage(destBmp))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                    g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                    g.DrawImage(srcBmp, 0, 0, targetW, targetH);
+                }
+            }
+            sw.Stop();
+            double bilinearMs = sw.Elapsed.TotalMilliseconds / 100;
+
+            // Bicubic
+            sw.Reset();
+            sw.Start();
+            for (int i = 0; i < 100; i++)
+            {
+                using (var g = System.Drawing.Graphics.FromImage(destBmp))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                    g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                    g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                    g.DrawImage(srcBmp, 0, 0, targetW, targetH);
+                }
+            }
+            sw.Stop();
+            double bicubicMs = sw.Elapsed.TotalMilliseconds / 100;
+
+            results.AppendLine($"Target {targetW}x{targetH}:");
+            results.AppendLine($"  Bilinear: {bilinearMs:F4} ms");
+            results.AppendLine($"  HighQualityBicubic: {bicubicMs:F4} ms");
+            results.AppendLine($"  Delta Overhead: {bicubicMs - bilinearMs:F4} ms");
+        }
+
+        System.IO.File.WriteAllText("cpu_resizing_profile.txt", results.ToString());
+    }
 }
 
 internal sealed class FakeUiActions : IUiActions

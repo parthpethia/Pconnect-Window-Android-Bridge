@@ -17,6 +17,7 @@ class ConnectScreen extends StatefulWidget {
   final ConnectionStatus status;
   final Future<void> Function(String host, int port, {int? wssPort}) onConnect;
   final Future<bool> Function(String code) onPair;
+  final VoidCallback? onCancel;
 
   const ConnectScreen({
     super.key,
@@ -24,6 +25,7 @@ class ConnectScreen extends StatefulWidget {
     required this.status,
     required this.onConnect,
     required this.onPair,
+    this.onCancel,
   });
 
   @override
@@ -634,14 +636,14 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                       side: BorderSide(color: Colors.white.withOpacity(0.1)),
                     ),
                     elevation: 12,
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 40, vertical: 30),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          CircularProgressIndicator(strokeWidth: 3.5),
-                          SizedBox(height: 20),
-                          Text(
+                          const CircularProgressIndicator(strokeWidth: 3.5),
+                          const SizedBox(height: 20),
+                          const Text(
                             'Establishing Bridge...',
                             style: TextStyle(
                               color: Colors.white,
@@ -649,12 +651,26 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          SizedBox(height: 6),
-                          Text(
+                          const SizedBox(height: 6),
+                          const Text(
                             'Securing connection via websocket',
                             style: TextStyle(
                               color: Colors.white54,
                               fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          TextButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _connecting = false;
+                              });
+                              widget.onCancel?.call();
+                            },
+                            icon: const Icon(Icons.close_rounded),
+                            label: const Text('Cancel Connection'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.redAccent,
                             ),
                           ),
                         ],

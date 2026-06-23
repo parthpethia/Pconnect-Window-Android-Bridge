@@ -52,9 +52,16 @@ class PcWebSocket {
       // screen captures, file data) hidden from LAN sniffers.
       var wssAttempt = await _tryWss(h, tlsPort, onTrace);
       if (wssAttempt.channel == null) {
-        // Cert may have rotated on PC — clear the TOFU pin and retry once.
-        await TofuPinStore.clearPin(h, tlsPort);
-        wssAttempt = await _tryWss(h, tlsPort, onTrace);
+        // Only clear the pin and retry WSS if the failure is likely due to certificate validation/mismatch.
+        // If it was a connection timeout or socket error, retrying is redundant.
+        final err = wssAttempt.detail ?? '';
+        final isCertError = err.contains('HandshakeException') ||
+            err.contains('TlsException') ||
+            err.contains('cert');
+        if (isCertError) {
+          await TofuPinStore.clearPin(h, tlsPort);
+          wssAttempt = await _tryWss(h, tlsPort, onTrace);
+        }
       }
       if (wssAttempt.channel != null) {
         onTrace?.call('wss', wssAttempt.detail ?? 'ok');

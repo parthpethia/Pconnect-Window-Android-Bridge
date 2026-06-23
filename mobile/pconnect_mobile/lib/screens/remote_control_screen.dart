@@ -9,9 +9,9 @@ import '../widgets/screen_preview_webrtc.dart';
 
 /// Screen capture quality presets — balances sharpness vs bandwidth.
 enum ScreenQuality {
-  normal(label: 'Normal', width: 720, quality: 60, intervalMs: 1000),
-  high(label: 'High', width: 1080, quality: 70, intervalMs: 800),
-  best(label: 'Best', width: 1440, quality: 80, intervalMs: 700);
+  normal(label: 'Normal', width: 1080, quality: 75, intervalMs: 900),
+  high(label: 'High', width: 1440, quality: 80, intervalMs: 800),
+  best(label: 'Best', width: 1920, quality: 90, intervalMs: 600);
 
   final String label;
   final int width;
@@ -108,6 +108,7 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
       builder: (_) => _FullscreenRemote(
         conn: widget.conn,
         initialMode: _modeIndex,
+        quality: _quality,
       ),
     ));
   }
@@ -186,6 +187,7 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
               conn: conn,
               screenOn: _screenOn && enabled,
               cs: cs,
+              quality: _quality,
             ),
           ),
 
@@ -305,8 +307,9 @@ class _PreviewPanel extends StatelessWidget {
   final PcConnection? conn;
   final bool screenOn;
   final ColorScheme cs;
+  final ScreenQuality quality;
 
-  const _PreviewPanel({required this.conn, required this.screenOn, required this.cs});
+  const _PreviewPanel({required this.conn, required this.screenOn, required this.cs, required this.quality});
 
   @override
   Widget build(BuildContext context) {
@@ -356,7 +359,9 @@ class _PreviewPanel extends StatelessWidget {
                   frame,
                   gaplessPlayback: true,
                   fit: BoxFit.contain,
-                  filterQuality: FilterQuality.medium,
+                  filterQuality: quality == ScreenQuality.best
+                      ? FilterQuality.high
+                      : FilterQuality.medium,
                 );
               },
             );
@@ -742,7 +747,8 @@ class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
 class _FullscreenRemote extends StatefulWidget {
   final PcConnection? conn;
   final int initialMode;
-  const _FullscreenRemote({required this.conn, required this.initialMode});
+  final ScreenQuality quality;
+  const _FullscreenRemote({required this.conn, required this.initialMode, required this.quality});
   @override
   State<_FullscreenRemote> createState() => _FullscreenRemoteState();
 }
@@ -809,7 +815,9 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
                                   frame,
                                   gaplessPlayback: true,
                                   fit: BoxFit.contain,
-                                  filterQuality: FilterQuality.medium,
+                                  filterQuality: widget.quality == ScreenQuality.best
+                                      ? FilterQuality.high
+                                      : FilterQuality.medium,
                                 );
                               },
                             );

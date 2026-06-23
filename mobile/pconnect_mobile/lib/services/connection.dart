@@ -161,6 +161,7 @@ class PcConnection {
   String? _lastTransportTrace;
 
   Timer? _reconnectTimer;
+  Timer? _handshakeTimer;
   int _reconnectDelayMs = 500;
   bool _needsPairing = false;
 
@@ -209,6 +210,7 @@ class PcConnection {
 
   Future<void> _connectInternal() async {
     _reconnectTimer?.cancel();
+    _handshakeTimer?.cancel();
     final host = _host;
     final port = _port;
     if (host == null || port == null) return;
@@ -242,6 +244,14 @@ class PcConnection {
         onDone: () => _scheduleReconnect('Disconnected'),
         cancelOnError: true,
       );
+
+      // Start handshake timeout timer (8 seconds)
+      _handshakeTimer = Timer(const Duration(seconds: 8), () {
+        if (!_disposed && !currentStatus.connected) {
+          _scheduleReconnect('Handshake timeout');
+        }
+      });
+
       _send({
         'v': 1,
         'type': 'hello',
@@ -300,6 +310,8 @@ class PcConnection {
           break;
 
         case 'helloAck':
+          _handshakeTimer?.cancel();
+          _handshakeTimer = null;
           await _armIntegrityKey();
           _reconnectDelayMs = 500;
           _needsPairing = false;
@@ -307,6 +319,8 @@ class PcConnection {
           break;
 
         case 'authRequired':
+          _handshakeTimer?.cancel();
+          _handshakeTimer = null;
           _needsPairing = true;
           _setStatus(const ConnectionStatus(connected: false, needsPairing: true));
           break;
@@ -421,6 +435,8 @@ class PcConnection {
           break;
 
         case 'error':
+          _handshakeTimer?.cancel();
+          _handshakeTimer = null;
           final msg = obj['message'] as String? ?? 'Unknown error';
           final cur = currentStatus;
           _setStatus(ConnectionStatus(
@@ -905,6 +921,7 @@ class PcConnection {
   void dispose() {
     _disposed = true;
     _reconnectTimer?.cancel();
+    _handshakeTimer?.cancel();
     _webrtcRetryTimer?.cancel();
     _sub?.cancel();
     _channel?.sink.close();

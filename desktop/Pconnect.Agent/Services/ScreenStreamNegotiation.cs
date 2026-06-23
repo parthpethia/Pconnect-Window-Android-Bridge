@@ -56,4 +56,19 @@ internal static class ScreenStreamNegotiation
 
         return serverSupported[0];
     }
+
+    /// <summary>
+    /// Computes the target bitrate in Kbps for WebRTC streaming based on client-requested quality.
+    /// Presets: 75 -> 3000 Kbps (Normal), 80 -> 5500 Kbps (High), 90 -> 9000 Kbps (Best).
+    /// </summary>
+    public static int GetWebRtcTargetBitrate(int clientQuality)
+    {
+        return clientQuality switch
+        {
+            <= 75 => 3000,
+            <= 80 => 5500,
+            _ => 9000
+        };
+    }
 }
+

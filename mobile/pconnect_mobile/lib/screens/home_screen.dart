@@ -210,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onToggle: (v) {
               setState(() => _screenPreviewOn = v);
               if (v) {
-                conn?.startScreenCapture(intervalMs: 1200, width: 480, quality: 52);
+                conn?.startScreenCapture(intervalMs: 1000, width: 720, quality: 70);
               } else {
                 conn?.stopScreenCapture();
               }
@@ -502,8 +502,7 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
                       return Image.memory(
                         frame,
                         gaplessPlayback: true,
-                        filterQuality: FilterQuality.low,
-                        cacheWidth: 480,
+                        filterQuality: FilterQuality.medium,
                       );
                     },
                   );

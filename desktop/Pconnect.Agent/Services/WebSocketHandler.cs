@@ -772,12 +772,7 @@ internal sealed class WebSocketHandler
                                 targetHeight = ((int)(dxgiCapture.Height * ratio) / 2) * 2;
                             }
 
-                            int targetBitrate = clientQuality switch
-                            {
-                                <= 60 => 1000,
-                                <= 70 => 2500,
-                                _ => 5000
-                            };
+                            int targetBitrate = ScreenStreamNegotiation.GetWebRtcTargetBitrate(clientQuality);
 
                             h264Encoder = new H264EncoderService();
                             h264Encoder.Initialize(targetWidth, targetHeight, 30, targetBitrate, dxgiCapture.Device);
@@ -1235,7 +1230,9 @@ internal sealed class WebSocketHandler
                 {
                     using (var g = Graphics.FromImage(destBmp))
                     {
-                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
                         g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
                         g.DrawImage(srcBmp, 0, 0, destWidth, destHeight);
 

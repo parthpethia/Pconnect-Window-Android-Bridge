@@ -103,4 +103,22 @@ public sealed class ScreenStreamNegotiationTests
         var server = new[] { ScreenStreamNegotiation.JpegV1 };
         Assert.Equal(ScreenStreamNegotiation.JpegV1, ScreenStreamNegotiation.Negotiate(client, server));
     }
+
+    [Fact]
+    public void GetWebRtcTargetBitrate_returns_correct_bitrate_for_quality_presets()
+    {
+        // Preset exact boundaries
+        Assert.Equal(3000, ScreenStreamNegotiation.GetWebRtcTargetBitrate(75)); // Normal
+        Assert.Equal(5500, ScreenStreamNegotiation.GetWebRtcTargetBitrate(80)); // High
+        Assert.Equal(9000, ScreenStreamNegotiation.GetWebRtcTargetBitrate(90)); // Best
+
+        // Below and above preset boundary values
+        Assert.Equal(3000, ScreenStreamNegotiation.GetWebRtcTargetBitrate(0));
+        Assert.Equal(3000, ScreenStreamNegotiation.GetWebRtcTargetBitrate(74));
+        Assert.Equal(5500, ScreenStreamNegotiation.GetWebRtcTargetBitrate(76));
+        Assert.Equal(5500, ScreenStreamNegotiation.GetWebRtcTargetBitrate(79));
+        Assert.Equal(9000, ScreenStreamNegotiation.GetWebRtcTargetBitrate(81));
+        Assert.Equal(9000, ScreenStreamNegotiation.GetWebRtcTargetBitrate(100));
+    }
 }
+

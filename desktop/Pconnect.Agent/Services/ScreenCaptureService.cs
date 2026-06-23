@@ -183,7 +183,9 @@ internal sealed class ScreenCaptureService : IDisposable
             using var thumbnail = new Bitmap(_targetWidth, targetHeight);
             using (var g = Graphics.FromImage(thumbnail))
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
                 g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
                 g.DrawImage(fullBitmap, 0, 0, _targetWidth, targetHeight);
             }
@@ -239,7 +241,9 @@ internal sealed class ScreenCaptureService : IDisposable
             using var thumbnail = new Bitmap(_targetWidth, targetHeight);
             using (var g = Graphics.FromImage(thumbnail))
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
                 g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
                 g.DrawImage(fullBitmap, 0, 0, _targetWidth, targetHeight);
             }
