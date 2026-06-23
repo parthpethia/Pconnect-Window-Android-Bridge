@@ -46,6 +46,15 @@ internal sealed class TrayAppContext : ApplicationContext
             _tray.ShowBalloonTip(6000, "Pconnect", _runtime.DiscoveryStartError, ToolTipIcon.Warning);
         }
 
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+        {
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            if (!principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+            {
+                _tray.ShowBalloonTip(6000, "Pconnect", "Pconnect is running without administrator privileges. Keyboard and mouse input may be blocked when controlling elevated applications.", ToolTipIcon.Warning);
+            }
+        }
+
         // Agent starts silently in the tray. Dashboard is accessible via tray icon
         // double-click, context menu, or second-launch IPC.
     }

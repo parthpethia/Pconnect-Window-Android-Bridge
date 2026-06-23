@@ -814,16 +814,36 @@ internal sealed class WebSocketHandler
  
                                              while (!localCts.IsCancellationRequested && ws.State == WebSocketState.Open)
                                              {
-                                                 var frame = dxgiCapture.AcquireNextFrame(33); // Sync call directly on dedicated thread!
+                                                 DxgiFrame? frame = null;
+                                                 try
+                                                 {
+                                                     frame = dxgiCapture.AcquireNextFrame(33);
+                                                 }
+                                                 catch (Exception ex)
+                                                 {
+                                                     Console.WriteLine($"[WebSocketHandler] DXGI capture error: {ex.Message}. Retrying after 500ms backoff and re-initialization.");
+                                                     Thread.Sleep(500);
+                                                     try
+                                                     {
+                                                         dxgiCapture.Initialize();
+                                                     }
+                                                     catch (Exception initEx)
+                                                     {
+                                                         Console.WriteLine($"[WebSocketHandler] DXGI re-initialization failed: {initEx.Message}");
+                                                     }
+                                                     continue;
+                                                 }
+
                                                  if (frame == null)
                                                  {
                                                      Thread.Sleep(10);
                                                      continue;
                                                  }
- 
+
                                                  try
                                                  {
-                                                     if (h264Encoder != null && webRtcSession != null)
+                                                     var session = webRtcSession;
+                                                     if (h264Encoder != null && session != null)
                                                      {
                                                          ReadOnlyMemory<byte> nals;
                                                          if (h264Encoder.UseGpuPath)
@@ -850,7 +870,7 @@ internal sealed class WebSocketHandler
  
                                                          if (nals.Length > 0)
                                                          {
-                                                             webRtcSession.SendVideoFrame(nals, 33);
+                                                             session.SendVideoFrame(nals, 33);
                                                          }
                                                      }
                                                  }

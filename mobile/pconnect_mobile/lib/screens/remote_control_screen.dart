@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/connection.dart';
 import '../widgets/screen_preview_webrtc.dart';
+import 'diagnostics_screen.dart';
 
 /// Screen capture quality presets — balances sharpness vs bandwidth.
 enum ScreenQuality {
@@ -115,135 +115,185 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final conn = widget.conn;
-    final enabled = widget.connected;
+    if (conn == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Remote Control')),
+        body: const Center(child: Text('No PC connection')),
+      );
+    }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Remote Control'),
-        actions: [
-          // Quality selector
-          PopupMenuButton<ScreenQuality>(
-            icon: Icon(
-              _quality == ScreenQuality.best
-                  ? Icons.hd_rounded
-                  : _quality == ScreenQuality.high
-                      ? Icons.high_quality_rounded
-                      : Icons.sd_rounded,
-              size: 20,
-              color: cs.primary,
-            ),
-            tooltip: 'Preview Quality',
-            onSelected: enabled ? _setQuality : null,
-            itemBuilder: (_) => ScreenQuality.values.map((q) {
-              final active = q == _quality;
-              return PopupMenuItem(
-                value: q,
-                child: Row(
-                  children: [
-                    Icon(
-                      active ? Icons.radio_button_checked : Icons.radio_button_off,
-                      size: 18,
-                      color: active ? cs.primary : cs.onSurface.withValues(alpha: 0.5),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      q.label,
-                      style: TextStyle(
-                        fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-                        color: active ? cs.primary : cs.onSurface,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${q.width}p',
-                      style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.4)),
-                    ),
-                  ],
+    return ValueListenableBuilder<ConnectionStatus>(
+      valueListenable: conn.statusNotifier,
+      builder: (context, status, _) {
+        final cs = Theme.of(context).colorScheme;
+        final enabled = status.connected;
+        final hasError = status.error != null;
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Remote Control'),
+            actions: [
+              if (hasError || !enabled)
+                IconButton(
+                  icon: const Icon(Icons.error_outline_rounded, color: Colors.redAccent),
+                  tooltip: 'Connection Error',
+                  onPressed: () => _showErrorDialog(context, conn, status),
                 ),
-              );
-            }).toList(),
-          ),
-          // Preview toggle
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Preview', style: TextStyle(fontSize: 12, color: cs.onSurface)),
-              Switch(
-                value: _screenOn,
-                onChanged: enabled ? _togglePreview : null,
+              // Quality selector
+              PopupMenuButton<ScreenQuality>(
+                icon: Icon(
+                  _quality == ScreenQuality.best
+                      ? Icons.hd_rounded
+                      : _quality == ScreenQuality.high
+                          ? Icons.high_quality_rounded
+                          : Icons.sd_rounded,
+                  size: 20,
+                  color: cs.primary,
+                ),
+                tooltip: 'Preview Quality',
+                onSelected: enabled ? _setQuality : null,
+                itemBuilder: (_) => ScreenQuality.values.map((q) {
+                  final active = q == _quality;
+                  return PopupMenuItem(
+                    value: q,
+                    child: Row(
+                      children: [
+                        Icon(
+                          active ? Icons.radio_button_checked : Icons.radio_button_off,
+                          size: 18,
+                          color: active ? cs.primary : cs.onSurface.withValues(alpha: 0.5),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          q.label,
+                          style: TextStyle(
+                            fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                            color: active ? cs.primary : cs.onSurface,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${q.width}p',
+                          style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.4)),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+              // Preview toggle
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Preview', style: TextStyle(fontSize: 12, color: cs.onSurface)),
+                  Switch(
+                    value: _screenOn,
+                    onChanged: enabled ? _togglePreview : null,
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // ── TOP: Screen Preview ──
-          Expanded(
-            flex: 5,
-            child: _PreviewPanel(
-              conn: conn,
-              screenOn: _screenOn && enabled,
-              cs: cs,
-              quality: _quality,
-            ),
-          ),
-
-          // ── Mode toggle chips ──
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Row(
-              children: [
-                _ModeChip(
-                  icon: Icons.touch_app_rounded,
-                  label: 'Trackpad',
-                  selected: _modeIndex == 0,
-                  onTap: () => setState(() => _modeIndex = 0),
+          body: Column(
+            children: [
+              // ── TOP: Screen Preview ──
+              Expanded(
+                flex: 5,
+                child: _PreviewPanel(
+                  conn: conn,
+                  screenOn: _screenOn && enabled,
                   cs: cs,
-                ),
-                const SizedBox(width: 8),
-                _ModeChip(
-                  icon: Icons.keyboard_rounded,
-                  label: 'Keyboard',
-                  selected: _modeIndex == 1,
-                  onTap: () => setState(() => _modeIndex = 1),
-                  cs: cs,
-                ),
-              ],
-            ),
-          ),
-
-          // ── BOTTOM: Trackpad or Keyboard ──
-          Expanded(
-            flex: 5,
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              child: _modeIndex == 0
-                  ? _EmbeddedTrackpad(key: const ValueKey('tp'), conn: conn, enabled: enabled)
-                  : _EmbeddedKeyboard(key: const ValueKey('kb'), conn: conn, enabled: enabled),
-            ),
-          ),
-
-          // ── Fullscreen button ──
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: FilledButton.icon(
-                onPressed: enabled ? _openFullscreen : null,
-                icon: const Icon(Icons.fullscreen_rounded, size: 24),
-                label: const Text('Fullscreen', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: FilledButton.styleFrom(
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  quality: _quality,
                 ),
               ),
-            ),
+
+              // ── Mode toggle chips ──
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  children: [
+                    _ModeChip(
+                      icon: Icons.touch_app_rounded,
+                      label: 'Trackpad',
+                      selected: _modeIndex == 0,
+                      onTap: () => setState(() => _modeIndex = 0),
+                      cs: cs,
+                    ),
+                    const SizedBox(width: 8),
+                    _ModeChip(
+                      icon: Icons.keyboard_rounded,
+                      label: 'Keyboard',
+                      selected: _modeIndex == 1,
+                      onTap: () => setState(() => _modeIndex = 1),
+                      cs: cs,
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── BOTTOM: Trackpad or Keyboard ──
+              Expanded(
+                flex: 5,
+                child: Stack(
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: _modeIndex == 0
+                          ? _EmbeddedTrackpad(key: const ValueKey('tp'), conn: conn, enabled: enabled)
+                          : _EmbeddedKeyboard(key: const ValueKey('kb'), conn: conn, enabled: enabled),
+                    ),
+                    if (!enabled)
+                      Positioned.fill(
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 16),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.wifi_off_rounded, color: Colors.white54, size: 40),
+                                SizedBox(height: 8),
+                                Text(
+                                  'Disconnected',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+
+              // ── Fullscreen button ──
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton.icon(
+                    onPressed: enabled ? _openFullscreen : null,
+                    icon: const Icon(Icons.fullscreen_rounded, size: 24),
+                    label: const Text('Fullscreen', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    style: FilledButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -362,6 +412,14 @@ class _PreviewPanel extends StatelessWidget {
                   filterQuality: quality == ScreenQuality.best
                       ? FilterQuality.high
                       : FilterQuality.medium,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: Colors.grey.shade900,
+                      child: const Center(
+                        child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                      ),
+                    );
+                  },
                 );
               },
             );
@@ -656,6 +714,40 @@ class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
+    final shortcutWidget = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        _chip('Ctrl+C', ['ctrl', 'c']),
+        _chip('Ctrl+V', ['ctrl', 'v']),
+        _chip('Ctrl+Z', ['ctrl', 'z']),
+        _chip('Ctrl+A', ['ctrl', 'a']),
+        _chip('Alt+Tab', ['alt', 'tab']),
+        _chip('Alt+F4', ['alt', 'f4']),
+        _chip('Win+D', ['win', 'd']),
+        _chip('Enter', ['enter']),
+        _chip('Esc', ['esc']),
+        _chip('Tab', ['tab']),
+        _chip('Del', ['delete']),
+      ],
+    );
+
+    final arrowKeysWidget = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _arrowBtn(Icons.arrow_back, ['left']),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _arrowBtn(Icons.arrow_upward, ['up']),
+            _arrowBtn(Icons.arrow_downward, ['down']),
+          ],
+        ),
+        _arrowBtn(Icons.arrow_forward, ['right']),
+      ],
+    );
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -664,7 +756,7 @@ class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
           TextField(
             controller: _tc,
             focusNode: _focusNode,
-            maxLines: 2,
+            maxLines: isLandscape ? 1 : 2,
             enabled: widget.enabled,
             autocorrect: false,
             enableSuggestions: false,
@@ -676,46 +768,26 @@ class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
             ),
           ),
           const SizedBox(height: 8),
-          // Shortcuts
           Expanded(
             child: SingleChildScrollView(
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
+              child: Column(
                 children: [
-                  _chip('Ctrl+C', ['ctrl', 'c']),
-                  _chip('Ctrl+V', ['ctrl', 'v']),
-                  _chip('Ctrl+Z', ['ctrl', 'z']),
-                  _chip('Ctrl+A', ['ctrl', 'a']),
-                  _chip('Alt+Tab', ['alt', 'tab']),
-                  _chip('Alt+F4', ['alt', 'f4']),
-                  _chip('Win+D', ['win', 'd']),
-                  _chip('Enter', ['enter']),
-                  _chip('Esc', ['esc']),
-                  _chip('Tab', ['tab']),
-                  _chip('Del', ['delete']),
+                  shortcutWidget,
+                  if (isLandscape) ...[
+                    const SizedBox(height: 12),
+                    arrowKeysWidget,
+                  ],
                 ],
               ),
             ),
           ),
-          // Arrow keys
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _arrowBtn(Icons.arrow_back, ['left']),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _arrowBtn(Icons.arrow_upward, ['up']),
-                    _arrowBtn(Icons.arrow_downward, ['down']),
-                  ],
-                ),
-                _arrowBtn(Icons.arrow_forward, ['right']),
-              ],
+          if (!isLandscape) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: arrowKeysWidget,
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -778,89 +850,151 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final conn = widget.conn;
+    if (conn == null) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: Text('No connection', style: TextStyle(color: Colors.white38))),
+      );
+    }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Row(
-          children: [
-            // ── Left: Live preview ──
-            Expanded(
-              flex: 6,
-              child: Container(
-                margin: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.3)),
+    return ValueListenableBuilder<ConnectionStatus>(
+      valueListenable: conn.statusNotifier,
+      builder: (context, status, _) {
+        final cs = Theme.of(context).colorScheme;
+        final connected = status.connected;
+        final hasError = status.error != null;
+
+        return Scaffold(
+          backgroundColor: Colors.black,
+          resizeToAvoidBottomInset: false,
+          body: SafeArea(
+            child: Row(
+              children: [
+                // ── Left: Live preview ──
+                Expanded(
+                  flex: 6,
+                  child: Container(
+                    margin: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.3)),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: InteractiveViewer(
+                      minScale: 1.0,
+                      maxScale: 6.0,
+                      child: ValueListenableBuilder<RTCVideoRenderer?>(
+                        valueListenable: conn.webrtcRendererNotifier,
+                        builder: (context, renderer, _) {
+                          if (renderer != null) {
+                            return ScreenPreviewWebRtc(renderer: renderer);
+                          }
+                          return ValueListenableBuilder<Uint8List?>(
+                            valueListenable: conn.screenFrameNotifier,
+                            builder: (_, frame, __) {
+                              if (frame == null) {
+                                return Center(child: CircularProgressIndicator(color: cs.primary));
+                              }
+                              return Image.memory(
+                                frame,
+                                gaplessPlayback: true,
+                                fit: BoxFit.contain,
+                                filterQuality: widget.quality == ScreenQuality.best
+                                    ? FilterQuality.high
+                                    : FilterQuality.medium,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: Colors.grey.shade900,
+                                    child: const Center(
+                                      child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: widget.conn != null
-                    ? InteractiveViewer(
-                        minScale: 1.0,
-                        maxScale: 6.0,
-                        child: ValueListenableBuilder<RTCVideoRenderer?>(
-                          valueListenable: widget.conn!.webrtcRendererNotifier,
-                          builder: (context, renderer, _) {
-                            if (renderer != null) {
-                              return ScreenPreviewWebRtc(renderer: renderer);
-                            }
-                            return ValueListenableBuilder<Uint8List?>(
-                              valueListenable: widget.conn!.screenFrameNotifier,
-                              builder: (_, frame, __) {
-                                if (frame == null) {
-                                  return Center(child: CircularProgressIndicator(color: cs.primary));
-                                }
-                                return Image.memory(
-                                  frame,
-                                  gaplessPlayback: true,
-                                  fit: BoxFit.contain,
-                                  filterQuality: widget.quality == ScreenQuality.best
-                                      ? FilterQuality.high
-                                      : FilterQuality.medium,
-                                );
-                              },
-                            );
-                          },
-                        ),
-                      )
-                    : const Center(child: Text('No connection', style: TextStyle(color: Colors.white38))),
-              ),
-            ),
 
-            // ── Right: controls ──
-            Expanded(
-              flex: 4,
-              child: Column(
-                children: [
-                  // Mode toggle + exit
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 8, 8, 4),
-                    child: Row(
+                // ── Right: controls ──
+                Expanded(
+                  flex: 4,
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                    child: Column(
                       children: [
-                        _miniChip('Trackpad', _mode == 0, () => setState(() => _mode = 0), cs),
-                        const SizedBox(width: 4),
-                        _miniChip('Keyboard', _mode == 1, () => setState(() => _mode = 1), cs),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.fullscreen_exit, color: Colors.white70),
-                          onPressed: () => Navigator.of(context).pop(),
-                          tooltip: 'Exit Fullscreen',
+                        // Mode toggle + exit
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(4, 8, 8, 4),
+                          child: Row(
+                            children: [
+                              _miniChip('Trackpad', _mode == 0, () => setState(() => _mode = 0), cs),
+                              const SizedBox(width: 4),
+                              _miniChip('Keyboard', _mode == 1, () => setState(() => _mode = 1), cs),
+                              const Spacer(),
+                              if (hasError || !connected)
+                                IconButton(
+                                  icon: const Icon(Icons.error_outline_rounded, color: Colors.redAccent),
+                                  tooltip: 'Connection Error',
+                                  onPressed: () => _showErrorDialog(context, conn, status),
+                                ),
+                              IconButton(
+                                icon: const Icon(Icons.fullscreen_exit, color: Colors.white70),
+                                onPressed: () => Navigator.of(context).pop(),
+                                tooltip: 'Exit Fullscreen',
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              _mode == 0
+                                  ? _EmbeddedTrackpad(conn: conn, enabled: connected)
+                                  : _EmbeddedKeyboard(conn: conn, enabled: connected),
+                              if (!connected)
+                                Positioned.fill(
+                                                                  child: Container(
+                                    margin: const EdgeInsets.only(left: 16, right: 16, bottom: 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.65),
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: const Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.wifi_off_rounded, color: Colors.white54, size: 36),
+                                          SizedBox(height: 6),
+                                          Text(
+                                            'Disconnected',
+                                            style: TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  Expanded(
-                    child: _mode == 0
-                        ? _EmbeddedTrackpad(conn: widget.conn, enabled: true)
-                        : _EmbeddedKeyboard(conn: widget.conn, enabled: true),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -884,4 +1018,45 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
       ),
     );
   }
+}
+
+void _showErrorDialog(BuildContext context, PcConnection conn, ConnectionStatus status) {
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.error_outline_rounded, color: Colors.redAccent),
+          SizedBox(width: 8),
+          Text('Connection Error'),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(status.error ?? 'Disconnected from PC. Check if the PC Agent is running and both devices are on the same local network.'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Dismiss'),
+        ),
+        FilledButton.icon(
+          onPressed: () {
+            Navigator.pop(ctx);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => DiagnosticsScreen(conn: conn, status: status),
+              ),
+            );
+          },
+          icon: const Icon(Icons.network_check_rounded, size: 18),
+          label: const Text('Diagnostics'),
+        ),
+      ],
+    ),
+  );
 }

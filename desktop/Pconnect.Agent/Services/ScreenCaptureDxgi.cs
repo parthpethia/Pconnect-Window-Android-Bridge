@@ -280,7 +280,7 @@ internal sealed class ScreenCaptureDxgi : IDisposable
         return false;
     }
 
-    private void Initialize()
+    internal void Initialize()
     {
         lock (_lock)
         {

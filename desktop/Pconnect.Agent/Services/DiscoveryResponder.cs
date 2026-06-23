@@ -102,16 +102,37 @@ internal sealed class DiscoveryResponder : IDisposable
             return;
         }
 
+        int consecutiveSocketExceptions = 0;
         while (!ct.IsCancellationRequested)
         {
             UdpReceiveResult result;
             try
             {
                 result = await _udp.ReceiveAsync(ct);
+                consecutiveSocketExceptions = 0;
             }
             catch (OperationCanceledException)
             {
                 break;
+            }
+            catch (SocketException ex)
+            {
+                consecutiveSocketExceptions++;
+                Console.WriteLine($"[DiscoveryResponder] SocketException (consecutive: {consecutiveSocketExceptions}): {ex.Message}");
+                if (consecutiveSocketExceptions > 5)
+                {
+                    Console.Error.WriteLine("[DiscoveryResponder] Fatal: More than 5 consecutive SocketExceptions. Terminating discovery loop.");
+                    break;
+                }
+                try
+                {
+                    await Task.Delay(1000, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                continue;
             }
             catch
             {

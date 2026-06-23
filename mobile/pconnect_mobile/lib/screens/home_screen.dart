@@ -503,6 +503,14 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
                         frame,
                         gaplessPlayback: true,
                         filterQuality: FilterQuality.medium,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: Colors.grey.shade900,
+                            child: const Center(
+                              child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                            ),
+                          );
+                        },
                       );
                     },
                   );

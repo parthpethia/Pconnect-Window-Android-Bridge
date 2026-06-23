@@ -329,17 +329,19 @@ class _KeyboardTab extends StatefulWidget {
 class _KeyboardTabState extends State<_KeyboardTab> {
   final _textController = TextEditingController();
   final _focusNode = FocusNode();
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     widget.conn?.resetKeyboardText();
-    _textController.addListener(_onTextChanged);
+    _textController.addListener(_onTextChangedRaw);
     _focusNode.addListener(_onFocusChanged);
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _textController.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -352,7 +354,12 @@ class _KeyboardTabState extends State<_KeyboardTab> {
     }
   }
 
-  void _onTextChanged() {
+  void _onTextChangedRaw() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 50), _flushText);
+  }
+
+  void _flushText() {
     if (!widget.enabled || widget.conn == null) return;
     if (_textController.value.composing.isValid) return;
 

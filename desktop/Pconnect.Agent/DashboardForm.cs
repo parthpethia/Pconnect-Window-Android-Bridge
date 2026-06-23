@@ -17,7 +17,6 @@ internal sealed class DashboardForm : Form
 
         Text = _runtime.SafeStartup.IsSafeMode ? "Pconnect Dashboard (safe mode)" : "Pconnect Dashboard";
         Width = 520;
-        Height = _runtime.SafeStartup.IsSafeMode ? 276 : 240;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -42,6 +41,13 @@ internal sealed class DashboardForm : Form
             Top = 40,
         };
 
+        bool isElevated;
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+        {
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            isElevated = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+
         var safeOffset = 0;
         if (_runtime.SafeStartup.IsSafeMode)
         {
@@ -60,10 +66,30 @@ internal sealed class DashboardForm : Form
             Controls.Add(safeBanner);
         }
 
+        var adminOffset = 0;
+        if (!isElevated)
+        {
+            adminOffset = 40;
+            var adminBanner = new Label
+            {
+                Text = "Warning: Running without administrator privileges. Keyboard and mouse input may be blocked when controlling elevated applications.",
+                Left = 18,
+                Top = 56 + safeOffset,
+                Width = ClientSize.Width - 36,
+                Height = 36,
+                ForeColor = Color.Red,
+                AutoSize = false,
+            };
+            Controls.Add(adminBanner);
+        }
+
+        var totalOffset = safeOffset + adminOffset;
+        Height = 240 + totalOffset;
+
         var grid = new TableLayoutPanel
         {
             Left = 18,
-            Top = 72 + safeOffset,
+            Top = 72 + totalOffset,
             Width = ClientSize.Width - 36,
             Height = 80,
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
@@ -88,7 +114,7 @@ internal sealed class DashboardForm : Form
         _toggleServerButton = new Button
         {
             Left = 18,
-            Top = 170 + safeOffset,
+            Top = 170 + totalOffset,
             Width = 160,
             Height = 32,
             Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
@@ -100,7 +126,7 @@ internal sealed class DashboardForm : Form
         {
             Text = "Close",
             Left = 190,
-            Top = 170 + safeOffset,
+            Top = 170 + totalOffset,
             Width = 100,
             Height = 32,
             Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
@@ -114,7 +140,7 @@ internal sealed class DashboardForm : Form
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
             Left = 18,
-            Top = 206 + safeOffset,
+            Top = 206 + totalOffset,
             Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
         };
 

@@ -27,11 +27,16 @@ class InputChannel {
   }
 
   void _send(int type, int x, int y, int extra) {
-    final data = ByteData(10);
-    data.setUint8(0, type);
-    data.setInt32(1, x, Endian.big);
-    data.setInt32(5, y, Endian.big);
-    data.setUint8(9, extra);
-    _channel.send(RTCDataChannelMessage.fromBinary(data.buffer.asUint8List()));
+    if (_channel.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    try {
+      final data = ByteData(10);
+      data.setUint8(0, type);
+      data.setInt32(1, x, Endian.big);
+      data.setInt32(5, y, Endian.big);
+      data.setUint8(9, extra);
+      _channel.send(RTCDataChannelMessage.fromBinary(data.buffer.asUint8List()));
+    } catch (_) {
+      // Drop silently on failure
+    }
   }
 }

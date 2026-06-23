@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/connection.dart';
+import 'diagnostics_screen.dart';
 import 'discovery_screen.dart'; // To reuse ProfileStore and DiscoveredPc structures if needed, or we declare them
 
 // We can import or declare the ConnectionProfile / ProfileStore to avoid duplication.
@@ -18,6 +19,7 @@ class ConnectScreen extends StatefulWidget {
   final Future<void> Function(String host, int port, {int? wssPort}) onConnect;
   final Future<bool> Function(String code) onPair;
   final VoidCallback? onCancel;
+  final PcConnection? conn;
 
   const ConnectScreen({
     super.key,
@@ -26,6 +28,7 @@ class ConnectScreen extends StatefulWidget {
     required this.onConnect,
     required this.onPair,
     this.onCancel,
+    this.conn,
   });
 
   @override
@@ -96,7 +99,29 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
     try {
       final results = await DiscoveryClient.discover(timeout: const Duration(seconds: 4));
       if (mounted) setState(() => _discovered = results);
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.error_outline_rounded, color: Colors.redAccent),
+                SizedBox(width: 8),
+                Text('Discovery Error'),
+              ],
+            ),
+            content: Text('Could not start local network discovery.\n\nDetails: ${e.toString().replaceAll('Exception: ', '')}'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Dismiss'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
     if (mounted) setState(() => _scanning = false);
   }
 
@@ -195,6 +220,35 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: cs.secondary.withOpacity(0.12),
+              ),
+            ),
+          ),
+
+          // ── Diagnostics Floating Button ──
+          Positioned(
+            top: 12,
+            right: 12,
+            child: SafeArea(
+              child: Tooltip(
+                message: 'Connection Diagnostics',
+                child: CircleAvatar(
+                  backgroundColor: Colors.white.withOpacity(0.06),
+                  foregroundColor: Colors.white70,
+                  child: IconButton(
+                    icon: const Icon(Icons.network_check_rounded),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => DiagnosticsScreen(
+                            conn: widget.conn,
+                            status: widget.status,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
             ),
           ),

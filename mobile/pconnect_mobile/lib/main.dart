@@ -231,6 +231,7 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
                     onConnect: _connectHost,
                     onPair: _pair,
                     onCancel: _disconnect,
+                    conn: _conn,
                   );
                 } else {
                   return MainShell(

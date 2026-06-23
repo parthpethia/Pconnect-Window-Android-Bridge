@@ -735,6 +735,20 @@ class PcConnection {
         });
       };
 
+      peer.onConnectionState = (state) {
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+          _fallbackFromWebRtc(rescheduleRetry: true);
+        }
+      };
+
+      peer.onIceConnectionState = (state) {
+        if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+            state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+          _fallbackFromWebRtc(rescheduleRetry: true);
+        }
+      };
+
       final dcInit = RTCDataChannelInit()
         ..ordered = false
         ..maxRetransmits = 0;
@@ -930,13 +944,21 @@ class PcConnection {
     webrtcRendererNotifier.dispose();
     _webrtcTimeout?.cancel();
     _rtcRenderer?.dispose();
+    _inputChannel?.close();
+    _inputChannel = null;
+    inputChannel = null;
     _rtcPeer?.close();
   }
 }
 
 class DiscoveryClient {
   static Future<List<DiscoveredPc>> discover({required Duration timeout}) async {
-    final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+    final RawDatagramSocket socket;
+    try {
+      socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+    } catch (e) {
+      throw Exception('Failed to bind discovery socket: $e');
+    }
     socket.broadcastEnabled = true;
     final results = <DiscoveredPc>[];
     final seen = <String>{};

@@ -150,7 +150,29 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
     try {
       final results = await DiscoveryClient.discover(timeout: const Duration(seconds: 3));
       if (mounted) setState(() => _discovered = results);
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.error_outline_rounded, color: Colors.redAccent),
+                SizedBox(width: 8),
+                Text('Discovery Error'),
+              ],
+            ),
+            content: Text('Could not start local network discovery.\n\nDetails: ${e.toString().replaceAll('Exception: ', '')}'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Dismiss'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
     if (mounted) setState(() => _scanning = false);
   }
 
