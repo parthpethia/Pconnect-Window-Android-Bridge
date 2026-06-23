@@ -7,6 +7,27 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/connection.dart';
 import '../widgets/screen_preview_webrtc.dart';
 
+/// Screen capture quality presets — balances sharpness vs bandwidth.
+enum ScreenQuality {
+  normal(label: 'Normal', width: 720, quality: 60, intervalMs: 1000),
+  high(label: 'High', width: 1080, quality: 70, intervalMs: 800),
+  best(label: 'Best', width: 1440, quality: 80, intervalMs: 700);
+
+  final String label;
+  final int width;
+  final int quality;
+  final int intervalMs;
+  const ScreenQuality({required this.label, required this.width, required this.quality, required this.intervalMs});
+
+  static ScreenQuality fromName(String? name) {
+    switch (name) {
+      case 'high': return ScreenQuality.high;
+      case 'best': return ScreenQuality.best;
+      default: return ScreenQuality.normal;
+    }
+  }
+}
+
 /// A dedicated remote-control page:
 ///  • Top half  – live PC screen preview
 ///  • Bottom half – toggle between Trackpad / Keyboard
@@ -28,6 +49,37 @@ class RemoteControlScreen extends StatefulWidget {
 class _RemoteControlScreenState extends State<RemoteControlScreen> {
   bool _screenOn = false;
   int _modeIndex = 0; // 0 = trackpad, 1 = keyboard
+  ScreenQuality _quality = ScreenQuality.normal;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadQualityPref();
+  }
+
+  Future<void> _loadQualityPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _quality = ScreenQuality.fromName(prefs.getString('screen_quality'));
+      });
+    }
+  }
+
+  Future<void> _setQuality(ScreenQuality q) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('screen_quality', q.name);
+    setState(() => _quality = q);
+    // Restart capture with new quality if preview is on
+    if (_screenOn) {
+      widget.conn?.stopScreenCapture();
+      widget.conn?.startScreenCapture(
+        intervalMs: q.intervalMs,
+        width: q.width,
+        quality: q.quality,
+      );
+    }
+  }
 
   @override
   void dispose() {
@@ -38,7 +90,11 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
   void _togglePreview(bool v) {
     setState(() => _screenOn = v);
     if (v) {
-      widget.conn?.startScreenCapture(intervalMs: 900, width: 640, quality: 58);
+      widget.conn?.startScreenCapture(
+        intervalMs: _quality.intervalMs,
+        width: _quality.width,
+        quality: _quality.quality,
+      );
     } else {
       widget.conn?.stopScreenCapture();
     }
@@ -66,6 +122,48 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
       appBar: AppBar(
         title: const Text('Remote Control'),
         actions: [
+          // Quality selector
+          PopupMenuButton<ScreenQuality>(
+            icon: Icon(
+              _quality == ScreenQuality.best
+                  ? Icons.hd_rounded
+                  : _quality == ScreenQuality.high
+                      ? Icons.high_quality_rounded
+                      : Icons.sd_rounded,
+              size: 20,
+              color: cs.primary,
+            ),
+            tooltip: 'Preview Quality',
+            onSelected: enabled ? _setQuality : null,
+            itemBuilder: (_) => ScreenQuality.values.map((q) {
+              final active = q == _quality;
+              return PopupMenuItem(
+                value: q,
+                child: Row(
+                  children: [
+                    Icon(
+                      active ? Icons.radio_button_checked : Icons.radio_button_off,
+                      size: 18,
+                      color: active ? cs.primary : cs.onSurface.withValues(alpha: 0.5),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      q.label,
+                      style: TextStyle(
+                        fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                        color: active ? cs.primary : cs.onSurface,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${q.width}p',
+                      style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.4)),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
           // Preview toggle
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -239,28 +337,31 @@ class _PreviewPanel extends StatelessWidget {
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.3)),
       ),
       clipBehavior: Clip.antiAlias,
-      child: ValueListenableBuilder<RTCVideoRenderer?>(
-        valueListenable: conn!.webrtcRendererNotifier,
-        builder: (context, renderer, _) {
-          if (renderer != null) {
-            return ScreenPreviewWebRtc(renderer: renderer);
-          }
-          return ValueListenableBuilder<Uint8List?>(
-            valueListenable: conn!.screenFrameNotifier,
-            builder: (context, frame, _) {
-              if (frame == null) {
-                return Center(child: CircularProgressIndicator(color: cs.primary));
-              }
-              return Image.memory(
-                frame,
-                gaplessPlayback: true,
-                fit: BoxFit.contain,
-                filterQuality: FilterQuality.low,
-                cacheWidth: 640,
-              );
-            },
-          );
-        },
+      child: InteractiveViewer(
+        minScale: 1.0,
+        maxScale: 6.0,
+        child: ValueListenableBuilder<RTCVideoRenderer?>(
+          valueListenable: conn!.webrtcRendererNotifier,
+          builder: (context, renderer, _) {
+            if (renderer != null) {
+              return ScreenPreviewWebRtc(renderer: renderer);
+            }
+            return ValueListenableBuilder<Uint8List?>(
+              valueListenable: conn!.screenFrameNotifier,
+              builder: (context, frame, _) {
+                if (frame == null) {
+                  return Center(child: CircularProgressIndicator(color: cs.primary));
+                }
+                return Image.memory(
+                  frame,
+                  gaplessPlayback: true,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.medium,
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
@@ -494,17 +595,19 @@ class _EmbeddedKeyboard extends StatefulWidget {
 class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
   final _tc = TextEditingController();
   final _focusNode = FocusNode();
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     widget.conn?.resetKeyboardText();
-    _tc.addListener(_onText);
+    _tc.addListener(_onTextRaw);
     _focusNode.addListener(_onFocusChanged);
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _tc.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -517,7 +620,14 @@ class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
     }
   }
 
-  void _onText() {
+  /// Debounce rapid text mutations (autocorrect, predictive text) to avoid
+  /// sending spurious backspaces. Fires 50ms after the last change.
+  void _onTextRaw() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 50), _flushText);
+  }
+
+  void _flushText() {
     if (!widget.enabled || widget.conn == null) return;
     if (_tc.value.composing.isValid) return;
 
@@ -551,6 +661,8 @@ class _EmbeddedKeyboardState extends State<_EmbeddedKeyboard> {
             focusNode: _focusNode,
             maxLines: 2,
             enabled: widget.enabled,
+            autocorrect: false,
+            enableSuggestions: false,
             decoration: InputDecoration(
               labelText: 'Type here → PC',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -678,28 +790,31 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: widget.conn != null
-                    ? ValueListenableBuilder<RTCVideoRenderer?>(
-                        valueListenable: widget.conn!.webrtcRendererNotifier,
-                        builder: (context, renderer, _) {
-                          if (renderer != null) {
-                            return ScreenPreviewWebRtc(renderer: renderer);
-                          }
-                          return ValueListenableBuilder<Uint8List?>(
-                            valueListenable: widget.conn!.screenFrameNotifier,
-                            builder: (_, frame, __) {
-                              if (frame == null) {
-                                return Center(child: CircularProgressIndicator(color: cs.primary));
-                              }
-                              return Image.memory(
-                                frame,
-                                gaplessPlayback: true,
-                                fit: BoxFit.contain,
-                                filterQuality: FilterQuality.low,
-                                cacheWidth: 640,
-                              );
-                            },
-                          );
-                        },
+                    ? InteractiveViewer(
+                        minScale: 1.0,
+                        maxScale: 6.0,
+                        child: ValueListenableBuilder<RTCVideoRenderer?>(
+                          valueListenable: widget.conn!.webrtcRendererNotifier,
+                          builder: (context, renderer, _) {
+                            if (renderer != null) {
+                              return ScreenPreviewWebRtc(renderer: renderer);
+                            }
+                            return ValueListenableBuilder<Uint8List?>(
+                              valueListenable: widget.conn!.screenFrameNotifier,
+                              builder: (_, frame, __) {
+                                if (frame == null) {
+                                  return Center(child: CircularProgressIndicator(color: cs.primary));
+                                }
+                                return Image.memory(
+                                  frame,
+                                  gaplessPlayback: true,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.medium,
+                                );
+                              },
+                            );
+                          },
+                        ),
                       )
                     : const Center(child: Text('No connection', style: TextStyle(color: Colors.white38))),
               ),

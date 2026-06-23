@@ -114,6 +114,15 @@ internal sealed class WebRtcSessionService : IDisposable
             return;
         }
 
+        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(frameBytes, out var segment) && segment.Array != null)
+        {
+            if (segment.Offset == 0 && segment.Count == segment.Array.Length)
+            {
+                _pc.SendVideo(durationMs, segment.Array);
+                return;
+            }
+        }
+
         byte[] array = frameBytes.ToArray();
         _pc.SendVideo(durationMs, array);
     }

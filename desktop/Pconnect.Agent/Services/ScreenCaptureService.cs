@@ -15,6 +15,7 @@ internal sealed class ScreenCaptureService : IDisposable
 {
     private System.Threading.Timer? _timer;
     private readonly Action<string, int, int>? _onFrame; // base64, width, height
+    private readonly Action<byte[], int, int>? _onRawFrame; // raw JPEG bytes, width, height
     private readonly object _gate = new();
     private bool _running;
     private int _intervalMs = 2000;
@@ -80,6 +81,15 @@ internal sealed class ScreenCaptureService : IDisposable
         _onFrame = onFrame;
     }
 
+    /// <summary>
+    /// Constructs a capture service that delivers raw JPEG bytes (no Base64 conversion).
+    /// Used by jpeg-bin-v1 binary transport.
+    /// </summary>
+    public ScreenCaptureService(Action<byte[], int, int> onRawFrame)
+    {
+        _onRawFrame = onRawFrame;
+    }
+
     public void Start(int intervalMs = 1000, int? targetWidth = null, long? jpegQuality = null)
     {
         lock (_gate)
@@ -119,10 +129,21 @@ internal sealed class ScreenCaptureService : IDisposable
 
         try
         {
-            var (base64, width, height) = CaptureScreen();
-            if (base64 != null)
+            if (_onRawFrame != null)
             {
-                _onFrame?.Invoke(base64, width, height);
+                var (jpegBytes, width, height) = CaptureScreenRaw();
+                if (jpegBytes != null)
+                {
+                    _onRawFrame.Invoke(jpegBytes, width, height);
+                }
+            }
+            else
+            {
+                var (base64, width, height) = CaptureScreen();
+                if (base64 != null)
+                {
+                    _onFrame?.Invoke(base64, width, height);
+                }
             }
         }
         catch
@@ -189,6 +210,60 @@ internal sealed class ScreenCaptureService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Captures the screen and returns raw JPEG bytes (no Base64 conversion).
+    /// </summary>
+    private (byte[]? jpegBytes, int width, int height) CaptureScreenRaw()
+    {
+        try
+        {
+            var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds;
+            if (bounds == null || bounds.Value.Width <= 0 || bounds.Value.Height <= 0)
+            {
+                return (null, 0, 0);
+            }
+
+            var screenWidth = bounds.Value.Width;
+            var screenHeight = bounds.Value.Height;
+
+            using var fullBitmap = new Bitmap(screenWidth, screenHeight);
+            using (var g = Graphics.FromImage(fullBitmap))
+            {
+                g.CopyFromScreen(bounds.Value.Location, Point.Empty, bounds.Value.Size);
+                DrawCursorOnto(g, bounds.Value);
+            }
+
+            var ratio = (double)_targetWidth / screenWidth;
+            var targetHeight = (int)(screenHeight * ratio);
+
+            using var thumbnail = new Bitmap(_targetWidth, targetHeight);
+            using (var g = Graphics.FromImage(thumbnail))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                g.DrawImage(fullBitmap, 0, 0, _targetWidth, targetHeight);
+            }
+
+            using var ms = new MemoryStream();
+            if (JpegCodec != null)
+            {
+                using var encoderParams = new EncoderParameters(1);
+                encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, _jpegQuality);
+                thumbnail.Save(ms, JpegCodec, encoderParams);
+            }
+            else
+            {
+                thumbnail.Save(ms, ImageFormat.Jpeg);
+            }
+
+            return (ms.ToArray(), _targetWidth, targetHeight);
+        }
+        catch
+        {
+            return (null, 0, 0);
+        }
+    }
+
     private static ImageCodecInfo? GetJpegCodecInfo()
     {
         foreach (var codec in ImageCodecInfo.GetImageEncoders())
@@ -204,7 +279,7 @@ internal sealed class ScreenCaptureService : IDisposable
     /// <summary>
     /// GDI screen capture does not include the pointer; composite it so remote preview is usable.
     /// </summary>
-    private static void DrawCursorOnto(Graphics g, Rectangle screenBounds)
+    internal static void DrawCursorOnto(Graphics g, Rectangle screenBounds, double scaleX = 1.0, double scaleY = 1.0)
     {
         var ci = new CursorInfo { CbSize = Marshal.SizeOf<CursorInfo>() };
         if (!GetCursorInfo(ref ci) || (ci.Flags & CursorShowing) == 0 || ci.HCursor == IntPtr.Zero)
@@ -212,13 +287,13 @@ internal sealed class ScreenCaptureService : IDisposable
             return;
         }
 
-        var x = ci.PtScreenPos.X - screenBounds.X;
-        var y = ci.PtScreenPos.Y - screenBounds.Y;
+        var x = (int)((ci.PtScreenPos.X - screenBounds.X) * scaleX);
+        var y = (int)((ci.PtScreenPos.Y - screenBounds.Y) * scaleY);
 
         if (GetIconInfo(ci.HCursor, out var iconInfo))
         {
-            x -= iconInfo.XHotspot;
-            y -= iconInfo.YHotspot;
+            x -= (int)(iconInfo.XHotspot * scaleX);
+            y -= (int)(iconInfo.YHotspot * scaleY);
             if (iconInfo.HbmColor != IntPtr.Zero)
             {
                 DeleteObject(iconInfo.HbmColor);
@@ -230,7 +305,7 @@ internal sealed class ScreenCaptureService : IDisposable
             }
         }
 
-        if (x < -64 || y < -64 || x > screenBounds.Width + 64 || y > screenBounds.Height + 64)
+        if (x < -64 || y < -64 || x > (screenBounds.Width * scaleX) + 64 || y > (screenBounds.Height * scaleY) + 64)
         {
             return;
         }
@@ -238,7 +313,9 @@ internal sealed class ScreenCaptureService : IDisposable
         var hdc = g.GetHdc();
         try
         {
-            DrawIconEx(hdc, x, y, ci.HCursor, 0, 0, 0, IntPtr.Zero, DiNormal);
+            int cursorWidth = scaleX == 1.0 ? 0 : (int)(32 * scaleX);
+            int cursorHeight = scaleY == 1.0 ? 0 : (int)(32 * scaleY);
+            DrawIconEx(hdc, x, y, ci.HCursor, cursorWidth, cursorHeight, 0, IntPtr.Zero, DiNormal);
         }
         finally
         {

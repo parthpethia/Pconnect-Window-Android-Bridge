@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -57,6 +58,7 @@ class ConnectionStatus {
   bool get screenPreviewAvailable =>
       screenStream != null ||
       screenStreamModes.contains(ScreenStreamModes.jpegV1) ||
+      screenStreamModes.contains(ScreenStreamModes.jpegBinV1) ||
       screenStreamModes.contains(ScreenStreamModes.webRtcV1);
 }
 
@@ -139,6 +141,9 @@ class PcConnection {
   final ValueNotifier<RTCVideoRenderer?> webrtcRendererNotifier = ValueNotifier(null);
   bool _webrtcActive = false;
   Timer? _webrtcTimeout;
+  bool _captureActive = false;
+  Timer? _webrtcRetryTimer;
+  bool _isRetryingWebRtc = false;
 
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
@@ -273,6 +278,19 @@ class PcConnection {
 
   Future<void> _onMessage(dynamic event) async {
     try {
+      // jpeg-bin-v1: binary WebSocket frame with 9-byte header
+      if (event is List<int>) {
+        if (event.length >= 9 && event[0] == 0x01) {
+          final bytes = event is Uint8List ? event : Uint8List.fromList(event);
+          // Parse width (uint32 big-endian, bytes 1-4)
+          // Parse height (uint32 big-endian, bytes 5-8)
+          // Remaining bytes (9+) are raw JPEG payload
+          final jpegBytes = Uint8List.sublistView(bytes, 9);
+          screenFrameNotifier.value = jpegBytes;
+        }
+        return;
+      }
+
       final obj = jsonDecode(event as String) as Map<String, dynamic>;
       final type = obj['type'];
 
@@ -446,11 +464,12 @@ class PcConnection {
           _webrtcTimeout?.cancel();
           _webrtcTimeout = null;
           _webrtcActive = true;
+          _cancelWebRtcRetry();
           break;
 
         case 'webrtcFallback':
           await _fallbackFromWebRtc();
-          _send({'v': 1, 'type': 'screenCaptureStart', 'intervalMs': 1000, 'width': 720, 'quality': 65});
+          _send({'v': 1, 'type': 'screenCaptureStart', 'intervalMs': 800, 'width': 1080, 'quality': 70});
           break;
       }
     } catch (e) {
@@ -648,27 +667,30 @@ class PcConnection {
 
   // ── Screen Capture ──
   void startScreenCapture({int intervalMs = 1000, int width = 720, int quality = 65}) {
+    _captureActive = true;
     final mode = currentStatus.effectiveScreenStream;
     if (mode == ScreenStreamModes.webRtcV1) {
-      _startWebRtc();
+      _startWebRtc(width: width, quality: quality);
       return;
     }
-    if (mode != ScreenStreamModes.jpegV1) return;
+    if (mode != ScreenStreamModes.jpegV1 && mode != ScreenStreamModes.jpegBinV1) return;
     _send({'v': 1, 'type': 'screenCaptureStart', 'intervalMs': intervalMs, 'width': width, 'quality': quality});
   }
 
   void stopScreenCapture() {
+    _captureActive = false;
+    _cancelWebRtcRetry();
     if (_webrtcActive) {
-      _fallbackFromWebRtc();
+      _fallbackFromWebRtc(rescheduleRetry: false);
     }
     _send({'v': 1, 'type': 'screenCaptureStop'});
     _screenFrameGen++;
     screenFrameNotifier.value = null;
   }
 
-  Future<void> _startWebRtc() async {
+  Future<void> _startWebRtc({int width = 720, int quality = 65}) async {
     try {
-      await _fallbackFromWebRtc();
+      await _fallbackFromWebRtc(rescheduleRetry: false);
 
       final renderer = RTCVideoRenderer();
       await renderer.initialize();
@@ -712,17 +734,19 @@ class PcConnection {
         'v': 1,
         'type': 'webrtcOffer',
         'sdp': offer.sdp,
+        'width': width,
+        'quality': quality,
       });
 
       _webrtcTimeout = Timer(const Duration(seconds: 5), () {
-        _fallbackFromWebRtc();
+        _fallbackFromWebRtc(rescheduleRetry: true);
       });
     } catch (_) {
-      await _fallbackFromWebRtc();
+      await _fallbackFromWebRtc(rescheduleRetry: true);
     }
   }
 
-  Future<void> _fallbackFromWebRtc() async {
+  Future<void> _fallbackFromWebRtc({bool rescheduleRetry = true}) async {
     _webrtcTimeout?.cancel();
     _webrtcTimeout = null;
 
@@ -748,6 +772,30 @@ class PcConnection {
     if (renderer != null) {
       unawaited(renderer.dispose());
     }
+
+    if (rescheduleRetry && _captureActive && !_disposed && currentStatus.effectiveScreenStream == ScreenStreamModes.webRtcV1) {
+      _scheduleWebRtcRetry();
+    }
+  }
+
+  void _scheduleWebRtcRetry() {
+    _webrtcRetryTimer?.cancel();
+    _webrtcRetryTimer = Timer(const Duration(seconds: 15), () async {
+      if (!_captureActive || _disposed || _webrtcActive || _isRetryingWebRtc) return;
+      _isRetryingWebRtc = true;
+      try {
+        await _startWebRtc(width: 720, quality: 65);
+      } catch (_) {
+        // Fallback is called automatically inside _startWebRtc on failure, rescheduling the timer.
+      } finally {
+        _isRetryingWebRtc = false;
+      }
+    });
+  }
+
+  void _cancelWebRtcRetry() {
+    _webrtcRetryTimer?.cancel();
+    _webrtcRetryTimer = null;
   }
 
   // ── App List ──
@@ -857,6 +905,7 @@ class PcConnection {
   void dispose() {
     _disposed = true;
     _reconnectTimer?.cancel();
+    _webrtcRetryTimer?.cancel();
     _sub?.cancel();
     _channel?.sink.close();
     _statusController.close();

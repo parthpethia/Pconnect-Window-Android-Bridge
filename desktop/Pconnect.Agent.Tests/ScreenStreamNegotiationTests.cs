@@ -67,4 +67,40 @@ public sealed class ScreenStreamNegotiationTests
         var server = new[] { ScreenStreamNegotiation.JpegV1 };
         Assert.Equal(ScreenStreamNegotiation.JpegV1, ScreenStreamNegotiation.Negotiate(client, server));
     }
+
+    [Fact]
+    public void JpegBinV1_appears_in_AgentSupportedModes_between_webrtc_and_jpeg()
+    {
+        var safe = SafeStartupOptions.Normal;
+        var modes = ScreenStreamNegotiation.AgentSupportedModes(safe);
+        Assert.Contains(ScreenStreamNegotiation.JpegBinV1, modes);
+        Assert.Contains(ScreenStreamNegotiation.JpegV1, modes);
+
+        var modesList = modes.ToList();
+        var binIdx = modesList.IndexOf(ScreenStreamNegotiation.JpegBinV1);
+        var jpegIdx = modesList.IndexOf(ScreenStreamNegotiation.JpegV1);
+        Assert.True(binIdx < jpegIdx, "jpeg-bin-v1 should come before jpeg-v1");
+
+        if (ScreenCaptureDxgi.IsSupported())
+        {
+            var rtcIdx = modesList.IndexOf(ScreenStreamNegotiation.WebRtcV1);
+            Assert.True(rtcIdx < binIdx, "webrtc-v1 should come before jpeg-bin-v1");
+        }
+    }
+
+    [Fact]
+    public void Negotiate_jpegBinV1_preferred_over_jpegV1()
+    {
+        var client = new[] { ScreenStreamNegotiation.WebRtcV1, ScreenStreamNegotiation.JpegBinV1, ScreenStreamNegotiation.JpegV1 };
+        var server = new[] { ScreenStreamNegotiation.JpegBinV1, ScreenStreamNegotiation.JpegV1 };
+        Assert.Equal(ScreenStreamNegotiation.JpegBinV1, ScreenStreamNegotiation.Negotiate(client, server));
+    }
+
+    [Fact]
+    public void Negotiate_jpegBinV1_skipped_when_server_does_not_support()
+    {
+        var client = new[] { ScreenStreamNegotiation.WebRtcV1, ScreenStreamNegotiation.JpegBinV1, ScreenStreamNegotiation.JpegV1 };
+        var server = new[] { ScreenStreamNegotiation.JpegV1 };
+        Assert.Equal(ScreenStreamNegotiation.JpegV1, ScreenStreamNegotiation.Negotiate(client, server));
+    }
 }

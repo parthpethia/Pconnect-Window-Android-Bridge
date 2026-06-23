@@ -1,11 +1,13 @@
 namespace Pconnect.Agent.Services;
 
 /// <summary>
-/// Screen preview / streaming backends. Production today uses <see cref="JpegV1"/> only.
+/// Screen preview / streaming backends.
+/// Priority: <see cref="WebRtcV1"/> → <see cref="JpegBinV1"/> → <see cref="JpegV1"/>.
 /// </summary>
 internal static class ScreenStreamNegotiation
 {
     public const string JpegV1 = "jpeg-v1";
+    public const string JpegBinV1 = "jpeg-bin-v1";
     public const string WebRtcV1 = "webrtc-v1";
 
     public static IReadOnlyList<string> AgentSupportedModes(SafeStartupOptions safe)
@@ -20,6 +22,7 @@ internal static class ScreenStreamNegotiation
         {
             modes.Add(WebRtcV1);
         }
+        modes.Add(JpegBinV1);
         modes.Add(JpegV1);
 
         return modes;

@@ -466,49 +466,50 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
           ],
         ),
         if (widget.screenPreviewOn && widget.connected && conn != null)
-          ValueListenableBuilder<RTCVideoRenderer?>(
-            valueListenable: conn.webrtcRendererNotifier,
-            builder: (context, renderer, _) {
-              if (renderer != null) {
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: ValueListenableBuilder<RTCVideoValue>(
-                    valueListenable: renderer,
-                    builder: (context, value, _) {
-                      final aspect = value.aspectRatio > 0 ? value.aspectRatio : 16 / 9;
-                      return AspectRatio(
-                        aspectRatio: aspect,
-                        child: ScreenPreviewWebRtc(renderer: renderer),
-                      );
-                    },
-                  ),
-                );
-              }
-              return ValueListenableBuilder<Uint8List?>(
-                valueListenable: conn.screenFrameNotifier,
-                builder: (context, frame, _) {
-                  if (frame == null) {
-                    return Container(
-                      height: 120,
-                      decoration: BoxDecoration(
-                        color: cs.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Center(child: CircularProgressIndicator()),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: InteractiveViewer(
+              minScale: 1.0,
+              maxScale: 6.0,
+              child: ValueListenableBuilder<RTCVideoRenderer?>(
+                valueListenable: conn.webrtcRendererNotifier,
+                builder: (context, renderer, _) {
+                  if (renderer != null) {
+                    return ValueListenableBuilder<RTCVideoValue>(
+                      valueListenable: renderer,
+                      builder: (context, value, _) {
+                        final aspect = value.aspectRatio > 0 ? value.aspectRatio : 16 / 9;
+                        return AspectRatio(
+                          aspectRatio: aspect,
+                          child: ScreenPreviewWebRtc(renderer: renderer),
+                        );
+                      },
                     );
                   }
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.memory(
-                      frame,
-                      gaplessPlayback: true,
-                      filterQuality: FilterQuality.low,
-                      cacheWidth: 480,
-                    ),
+                  return ValueListenableBuilder<Uint8List?>(
+                    valueListenable: conn.screenFrameNotifier,
+                    builder: (context, frame, _) {
+                      if (frame == null) {
+                        return Container(
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Center(child: CircularProgressIndicator()),
+                        );
+                      }
+                      return Image.memory(
+                        frame,
+                        gaplessPlayback: true,
+                        filterQuality: FilterQuality.low,
+                        cacheWidth: 480,
+                      );
+                    },
                   );
                 },
-              );
-            },
+              ),
+            ),
           ),
       ],
     );

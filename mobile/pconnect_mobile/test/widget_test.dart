@@ -12,6 +12,6 @@ import 'package:pconnect_mobile/main.dart';
 void main() {
   testWidgets('Pconnect app renders', (WidgetTester tester) async {
     await tester.pumpWidget(const PconnectApp());
-    expect(find.text('Pconnect'), findsOneWidget);
+    expect(find.text('PCONNECT'), findsOneWidget);
   });
 }

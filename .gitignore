@@ -29,3 +29,8 @@ desktop/Pconnect.Agent/Assets/opconfig-priv.pem
 # Crash logs
 hs_err_pid*.log
 replay_pid*.log
+
+# Agent/application logs
+*.log
+desktop/Pconnect.Agent/agent_error.log
+desktop/Pconnect.Agent/agent_output.log

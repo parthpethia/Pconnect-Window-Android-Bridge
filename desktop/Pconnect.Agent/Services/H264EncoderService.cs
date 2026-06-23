@@ -30,6 +30,12 @@ internal sealed class H264EncoderService : IDisposable
     private IMFSample? _nv12Sample;
     private bool _useGpuPath;
 
+    private IntPtr _d3d11Device = IntPtr.Zero;
+    private IntPtr _d3d11Context = IntPtr.Zero;
+    private IntPtr _gdiTexture = IntPtr.Zero;
+    private uint _gdiWidth = 0;
+    private uint _gdiHeight = 0;
+
     public bool UseGpuPath => _useGpuPath;
     internal static bool ForceInitializeSuccess { get; set; }
 
@@ -52,6 +58,21 @@ internal sealed class H264EncoderService : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int CreateTexture2DDelegate(IntPtr thisPtr, ref D3D11_TEXTURE2D_DESC pDesc, IntPtr pInitialData, out IntPtr ppTexture2D);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate void GetTextureDescDelegate(IntPtr thisPtr, out D3D11_TEXTURE2D_DESC pDesc);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate void GetImmediateContextDelegate(IntPtr thisPtr, out IntPtr ppImmediateContext);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate void CopyResourceDelegate(IntPtr thisPtr, IntPtr pDstResource, IntPtr pSrcResource);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int GetDCDelegate(IntPtr thisPtr, bool discard, out IntPtr hdc);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int ReleaseDCDelegate(IntPtr thisPtr, IntPtr dirtyRect);
+
     [DllImport("mfplat.dll", ExactSpelling = true)]
     private static extern int MFTEnumEx(
         ref Guid guidCategory,
@@ -63,6 +84,7 @@ internal sealed class H264EncoderService : IDisposable
 
     private static readonly Guid MFT_CATEGORY_VIDEO_ENCODER = new("f79e8927-7abb-4509-b497-5884d8b849e1");
     private const uint MFT_ENUM_FLAG_HARDWARE = 0x00000004;
+    private const uint MFT_ENUM_FLAG_ASYNCMFT = 0x00000008;
 
     private static readonly Guid MF_MT_MAJOR_TYPE = new("486717f7-dd39-4a2f-858d-01bc1a37e5e6");
     private static readonly Guid MF_MT_SUBTYPE = new("f7e34c9a-42c8-47c4-95a4-ad935f7330b7");
@@ -80,19 +102,47 @@ internal sealed class H264EncoderService : IDisposable
     {
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MFT_REGISTER_TYPE_INFO
+    {
+        public Guid guidMajorType;
+        public Guid guidSubtype;
+    }
+
     private Guid? ProbeHardwareEncoders()
     {
         Console.WriteLine("[H264Encoder] Probing hardware encoders...");
+        IntPtr pInput = IntPtr.Zero;
+        IntPtr pOutput = IntPtr.Zero;
         try
         {
+            var inputInfo = new MFT_REGISTER_TYPE_INFO
+            {
+                guidMajorType = MFMediaType_Video,
+                guidSubtype = MFVideoFormat_NV12
+            };
+            var outputInfo = new MFT_REGISTER_TYPE_INFO
+            {
+                guidMajorType = MFMediaType_Video,
+                guidSubtype = MFVideoFormat_H264
+            };
+
+            pInput = Marshal.AllocHGlobal(Marshal.SizeOf<MFT_REGISTER_TYPE_INFO>());
+            pOutput = Marshal.AllocHGlobal(Marshal.SizeOf<MFT_REGISTER_TYPE_INFO>());
+
+            Marshal.StructureToPtr(inputInfo, pInput, false);
+            Marshal.StructureToPtr(outputInfo, pOutput, false);
+
             Guid guidCategory = MFT_CATEGORY_VIDEO_ENCODER;
             int hr = MFTEnumEx(
                 ref guidCategory,
-                MFT_ENUM_FLAG_HARDWARE,
-                IntPtr.Zero,
-                IntPtr.Zero,
+                MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_ASYNCMFT,
+                pInput,
+                pOutput,
                 out IntPtr pppActivate,
                 out uint count);
+
+            Console.WriteLine($"[H264Encoder] MFTEnumEx with filters returned: HR=0x{hr:X}, Count={count}");
 
             if (hr == 0 && count > 0 && pppActivate != IntPtr.Zero)
             {
@@ -132,6 +182,11 @@ internal sealed class H264EncoderService : IDisposable
         {
             Console.WriteLine($"[H264Encoder] Error during hardware probe: {ex.Message}");
         }
+        finally
+        {
+            if (pInput != IntPtr.Zero) Marshal.FreeHGlobal(pInput);
+            if (pOutput != IntPtr.Zero) Marshal.FreeHGlobal(pOutput);
+        }
         return null;
     }
 
@@ -165,7 +220,7 @@ internal sealed class H264EncoderService : IDisposable
             Guid? clsid = ProbeHardwareEncoders();
             if (clsid == null)
             {
-                clsid = Guid.Parse("6ca50344-0502-4d15-a6a3-ad546b4e0138"); // CLSID_CMSH264EncoderMFT (software MFT)
+                clsid = Guid.Parse("6ca50344-051a-4ded-9779-a43305165e35"); // CLSID_CMSH264EncoderMFT (software MFT)
                 _isHardware = false;
                 _encoderName = "Software MFT (Microsoft H.264 Encoder)";
                 Console.WriteLine("[H264Encoder] Hardware encoder not found. Attempting software Media Foundation Encoder...");
@@ -186,11 +241,17 @@ internal sealed class H264EncoderService : IDisposable
                 
                 SetupMft(_mft, width, height, fps, bitrateKbps);
 
+                _d3d11Device = d3d11Device;
+
                 // Initialize DXGI Device Manager and Video Processor MFT for GPU-resident conversion
                 if (d3d11Device != IntPtr.Zero)
                 {
                     try
                     {
+                        var getImmediateContext = Marshal.GetDelegateForFunctionPointer<GetImmediateContextDelegate>(
+                            GetVtableFunc(d3d11Device, 40));
+                        getImmediateContext(d3d11Device, out _d3d11Context);
+
                         int hr = MFCreateDXGIDeviceManager(out uint resetToken, out IntPtr ppDeviceManager);
                         if (hr == 0 && ppDeviceManager != IntPtr.Zero)
                         {
@@ -332,6 +393,30 @@ internal sealed class H264EncoderService : IDisposable
         return texture;
     }
 
+    private IntPtr CreateGdiCompatibleTexture(IntPtr device, int width, int height)
+    {
+        var desc = new D3D11_TEXTURE2D_DESC
+        {
+            Width = (uint)width,
+            Height = (uint)height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = 87, // DXGI_FORMAT_B8G8R8A8_UNORM
+            SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+            Usage = 0, // D3D11_USAGE_DEFAULT
+            BindFlags = 0x20 | 0x8, // D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE
+            CPUAccessFlags = 0,
+            MiscFlags = Direct3DConstants.D3D11_RESOURCE_MISC_GDI_COMPATIBLE
+        };
+
+        var createTexture2D = Marshal.GetDelegateForFunctionPointer<CreateTexture2DDelegate>(
+            GetVtableFunc(device, 5)); // ID3D11Device::CreateTexture2D is index 5
+        
+        int hr = createTexture2D(device, ref desc, IntPtr.Zero, out IntPtr texture);
+        if (hr != 0) throw new Exception($"Failed to create GDI compatible texture: 0x{hr:X}");
+        return texture;
+    }
+
     private void CleanupGpuResources()
     {
         _useGpuPath = false;
@@ -348,11 +433,26 @@ internal sealed class H264EncoderService : IDisposable
             _nv12Texture = IntPtr.Zero;
         }
 
+        if (_gdiTexture != IntPtr.Zero)
+        {
+            Marshal.Release(_gdiTexture);
+            _gdiTexture = IntPtr.Zero;
+        }
+        _gdiWidth = 0;
+        _gdiHeight = 0;
+
         _videoProcessor?.Dispose();
         _videoProcessor = null;
 
         _deviceManager?.Dispose();
         _deviceManager = null;
+
+        if (_d3d11Context != IntPtr.Zero)
+        {
+            Marshal.Release(_d3d11Context);
+            _d3d11Context = IntPtr.Zero;
+        }
+        _d3d11Device = IntPtr.Zero;
     }
 
     private static IntPtr GetVtableFunc(IntPtr obj, int index)
@@ -364,6 +464,7 @@ internal sealed class H264EncoderService : IDisposable
     private void SetupMft(IMFTransform mft, int width, int height, int fps, int bitrateKbps)
     {
         IMFMediaType outputType = MediaFactory.MFCreateMediaType();
+        Console.WriteLine($"[H264Encoder] SetupMft: mft.NativePointer=0x{mft.NativePointer.ToString("X")}, outputType.NativePointer=0x{outputType.NativePointer.ToString("X")}");
         outputType.Set(MF_MT_MAJOR_TYPE, MFMediaType_Video);
         outputType.Set(MF_MT_SUBTYPE, MFVideoFormat_H264);
         outputType.Set(MF_MT_AVG_BITRATE, (uint)(bitrateKbps * 1000));
@@ -412,25 +513,35 @@ internal sealed class H264EncoderService : IDisposable
                 _mft.ProcessMessage(TMessageType.MessageCommandFlush, UIntPtr.Zero);
             }
 
-            byte[] nv12 = ConvertBgraToNv12(bgraPixels, width, height);
+            int frameSize = width * height;
+            int requiredSize = frameSize + (frameSize / 2);
+            byte[] nv12 = System.Buffers.ArrayPool<byte>.Shared.Rent(requiredSize);
+            try
+            {
+                ConvertBgraToNv12(bgraPixels, width, height, nv12);
 
-            IMFMediaBuffer buffer = MediaFactory.MFCreateMemoryBuffer(nv12.Length);
-            buffer.Lock(out IntPtr pbBuffer, out _, out _);
-            Marshal.Copy(nv12, 0, pbBuffer, nv12.Length);
-            buffer.CurrentLength = nv12.Length;
-            buffer.Unlock();
+                IMFMediaBuffer buffer = MediaFactory.MFCreateMemoryBuffer(requiredSize);
+                buffer.Lock(out IntPtr pbBuffer, out _, out _);
+                Marshal.Copy(nv12, 0, pbBuffer, requiredSize);
+                buffer.CurrentLength = requiredSize;
+                buffer.Unlock();
 
-            IMFSample sample = MediaFactory.MFCreateSample();
-            sample.AddBuffer(buffer);
-            
-            long frameDuration = 10000000 / _fps; // 100ns units
-            sample.SampleTime = (_frameCount - 1) * frameDuration;
-            sample.SampleDuration = frameDuration;
+                IMFSample sample = MediaFactory.MFCreateSample();
+                sample.AddBuffer(buffer);
+                
+                long frameDuration = 10000000 / _fps; // 100ns units
+                sample.SampleTime = (_frameCount - 1) * frameDuration;
+                sample.SampleDuration = frameDuration;
 
-            _mft.ProcessInput(0, sample, 0);
+                _mft.ProcessInput(0, sample, 0);
 
-            sample.Dispose();
-            buffer.Dispose();
+                sample.Dispose();
+                buffer.Dispose();
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(nv12);
+            }
 
             OutputStreamInfo streamInfo = _mft.GetOutputStreamInfo(0);
             bool mftAllocates = (streamInfo.Flags & 0x00000100) != 0; // MFT_OUTPUT_STREAM_PROVIDES_SAMPLES
@@ -519,6 +630,8 @@ internal sealed class H264EncoderService : IDisposable
         return ReadOnlyMemory<byte>.Empty;
     }
 
+    public bool DisableGpuCursorComposition { get; set; } = false;
+
     public ReadOnlyMemory<byte> EncodeGpuTexture(IntPtr gpuTexture, int width, int height, bool forceKeyframe)
     {
         if (ForceInitializeSuccess)
@@ -540,8 +653,75 @@ internal sealed class H264EncoderService : IDisposable
                 _mft.ProcessMessage(TMessageType.MessageCommandFlush, UIntPtr.Zero);
             }
 
+            IntPtr sourceTexture = gpuTexture;
+
+            if (!DisableGpuCursorComposition && _d3d11Device != IntPtr.Zero && _d3d11Context != IntPtr.Zero)
+            {
+                var getDesc = Marshal.GetDelegateForFunctionPointer<GetTextureDescDelegate>(
+                    GetVtableFunc(gpuTexture, 10)); // Index 10 is GetDesc
+                getDesc(gpuTexture, out var srcDesc);
+
+                if (_gdiTexture == IntPtr.Zero || _gdiWidth != srcDesc.Width || _gdiHeight != srcDesc.Height)
+                {
+                    if (_gdiTexture != IntPtr.Zero)
+                    {
+                        Marshal.Release(_gdiTexture);
+                        _gdiTexture = IntPtr.Zero;
+                    }
+
+                    _gdiTexture = CreateGdiCompatibleTexture(_d3d11Device, (int)srcDesc.Width, (int)srcDesc.Height);
+                    _gdiWidth = srcDesc.Width;
+                    _gdiHeight = srcDesc.Height;
+                }
+
+                var copyResource = Marshal.GetDelegateForFunctionPointer<CopyResourceDelegate>(
+                    GetVtableFunc(_d3d11Context, 47)); // Index 47 is CopyResource
+                copyResource(_d3d11Context, _gdiTexture, gpuTexture);
+
+                Guid IID_IDXGISurface1 = new Guid("4ae63092-6327-4c1b-80ae-bfe12ea32b86");
+                int hrSurf = Marshal.QueryInterface(_gdiTexture, ref IID_IDXGISurface1, out IntPtr dxgiSurfacePtr);
+                if (hrSurf == 0 && dxgiSurfacePtr != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var getDC = Marshal.GetDelegateForFunctionPointer<GetDCDelegate>(
+                            GetVtableFunc(dxgiSurfacePtr, 11)); // Index 11 is GetDC
+                        var releaseDC = Marshal.GetDelegateForFunctionPointer<ReleaseDCDelegate>(
+                            GetVtableFunc(dxgiSurfacePtr, 12)); // Index 12 is ReleaseDC
+
+                        int hrDc = getDC(dxgiSurfacePtr, false, out IntPtr hdc);
+                        if (hrDc != 0 || hdc == IntPtr.Zero)
+                        {
+                            Console.WriteLine($"[H264Encoder] GetDC failed: 0x{hrDc:X}");
+                        }
+                        if (hrDc == 0 && hdc != IntPtr.Zero)
+                        {
+                            try
+                            {
+                                using (var g = System.Drawing.Graphics.FromHdc(hdc))
+                                {
+                                    var screenBounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds 
+                                        ?? new System.Drawing.Rectangle(0, 0, (int)_gdiWidth, (int)_gdiHeight);
+                                    ScreenCaptureService.DrawCursorOnto(g, screenBounds, 1.0, 1.0);
+                                }
+                            }
+                            finally
+                            {
+                                releaseDC(dxgiSurfacePtr, IntPtr.Zero);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.Release(dxgiSurfacePtr);
+                    }
+                }
+
+                sourceTexture = _gdiTexture;
+            }
+
             Guid IID_ID3D11Texture2D = new Guid("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
-            int hr = MFCreateDXGISurfaceBuffer(IID_ID3D11Texture2D, gpuTexture, 0, false, out IntPtr pInputBufferPtr);
+            int hr = MFCreateDXGISurfaceBuffer(IID_ID3D11Texture2D, sourceTexture, 0, false, out IntPtr pInputBufferPtr);
             if (hr != 0) throw new Exception($"MFCreateDXGISurfaceBuffer failed: 0x{hr:X}");
 
             using var inputBuffer = new IMFMediaBuffer(pInputBufferPtr);
@@ -647,10 +827,9 @@ internal sealed class H264EncoderService : IDisposable
         return ReadOnlyMemory<byte>.Empty;
     }
 
-    private static byte[] ConvertBgraToNv12(byte[] bgra, int width, int height)
+    private static void ConvertBgraToNv12(byte[] bgra, int width, int height, byte[] nv12)
     {
         int frameSize = width * height;
-        byte[] nv12 = new byte[frameSize + (frameSize / 2)];
 
         for (int i = 0; i < frameSize; i++)
         {
@@ -684,8 +863,6 @@ internal sealed class H264EncoderService : IDisposable
                 nv12[uvIdx++] = (byte)Math.Clamp(v, 0, 255);
             }
         }
-
-        return nv12;
     }
 
     public void Dispose()

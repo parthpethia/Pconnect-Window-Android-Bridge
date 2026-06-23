@@ -22,7 +22,7 @@ A client must authenticate before sending control commands.
 Client → PC
 
 ```json
-{ "v": 1, "type": "hello", "deviceId": "<uuid>", "token": "<optional>", "screenStreamModes": ["jpeg-v1"] }
+{ "v": 1, "type": "hello", "deviceId": "<uuid>", "token": "<optional>", "screenStreamModes": ["webrtc-v1", "jpeg-bin-v1", "jpeg-v1"] }
 ```
 
 - `screenStreamModes` (optional): client-ordered list of preferred screen preview backends. Omitted on legacy clients; server treats that as `["jpeg-v1"]`.
@@ -43,12 +43,14 @@ PC → Client (if token valid)
 
 - `screenStreamModes`: backends the PC can offer for screen preview (may be empty when capture is disabled, e.g. safe mode).
 - `screenStream`: negotiated active backend for this session — first entry in the client's `screenStreamModes` that the PC also supports, else the PC's default. Legacy PCs omit these fields; clients assume `jpeg-v1` when `screenCapture` is advertised.
+- Negotiation priority order: `webrtc-v1` → `jpeg-bin-v1` → `jpeg-v1`.
 
 Known mode identifiers:
 
 | Mode | Description |
 |------|-------------|
-| `jpeg-v1` | Low-FPS JPEG frames over WebSocket (`screenCaptureStart` / `screenFrame`). **Production default.** |
+| `jpeg-v1` | Low-FPS JPEG frames over WebSocket (`screenCaptureStart` / `screenFrame`). JSON/Base64 encoding. **Legacy fallback.** |
+| `jpeg-bin-v1` | Low-FPS JPEG frames over binary WebSocket frames. 9-byte binary header + raw JPEG payload. No Base64 or JSON overhead. |
 | `webrtc-v1` | High-performance WebRTC + H.264 stream. Uses WebRTC video tracks and a binary data channel for input events. |
 
 - `role`: `"admin"` | `"media_only"` | `"readonly"` — the device's permission role
@@ -461,7 +463,7 @@ Client → PC
 
 ### Screen Capture
 
-If negotiated mode is `webrtc-v1`, the client does not send `screenCaptureStart`. Instead, signaling and media flow as described below. If negotiation or connection fails, it falls back to `jpeg-v1` (or `jpeg-bin-v1`).
+If negotiated mode is `webrtc-v1`, the client does not send `screenCaptureStart`. Instead, signaling and media flow as described below. If negotiation or connection fails, it falls back to `jpeg-bin-v1` (preferred) or `jpeg-v1`.
 
 #### WebRTC Signaling Messages
 
@@ -489,8 +491,10 @@ PC → Client (Ready - sent after ICE connected):
 
 PC → Client (Fallback - sent if WebRTC connection fails or times out):
 ```json
-{ "v": 1, "type": "webrtcFallback", "mode": "jpeg-v1" }
+{ "v": 1, "type": "webrtcFallback", "mode": "jpeg-bin-v1" }
 ```
+
+The `mode` field indicates the fallback backend (`jpeg-bin-v1` if the client supports it, otherwise `jpeg-v1`).
 
 #### Data Channel Input Protocol
 
@@ -509,7 +513,20 @@ Touch, gesture, and keyboard events are sent over the WebRTC data channel (label
 
 #### Legacy/Fallback Screen Capture (low-fps preview)
 
-Production uses negotiated mode `jpeg-v1` (see handshake `screenStream`).
+Production uses negotiated mode `jpeg-v1` or `jpeg-bin-v1` (see handshake `screenStream`).
+
+##### Binary Screen Frame (`jpeg-bin-v1`)
+
+When `jpeg-bin-v1` is negotiated, screen frames are sent as **binary WebSocket messages** with a 9-byte header followed by raw JPEG bytes:
+
+```
+[0]     message type    (1 byte)  — always 0x01 for screen frame
+[1-4]   frame width     (4 bytes) — uint32, big-endian
+[5-8]   frame height    (4 bytes) — uint32, big-endian
+[9+]    raw JPEG bytes  (variable)
+```
+
+Total header overhead: 9 bytes. No Base64 encoding, no JSON wrapping. The JPEG payload from the capture pipeline is delivered as-is.
 
 ##### Enable/disable capture
 

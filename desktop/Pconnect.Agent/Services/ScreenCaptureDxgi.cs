@@ -125,16 +125,16 @@ internal sealed class ScreenCaptureDxgi : IDisposable
     private const int D3D11_USAGE_STAGING = 3;
     private const uint D3D11_CPU_ACCESS_READ = 0x20000;
 
-    private static readonly Guid IID_IDXGIDevice = new("54ec77fa-1377-44e2-8c34-884906d5733f");
+    private static readonly Guid IID_IDXGIDevice = new("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
     private static readonly Guid IID_IDXGIAdapter = new("2411e7e1-12ac-4ccf-bd14-9798e8534d00");
     private static readonly Guid IID_IDXGIOutput = new("ae02cee6-ee35-4cf0-bf97-c1912f864b99");
     private static readonly Guid IID_IDXGIOutput1 = new("00cddea8-939b-4b83-a340-a685226666cc");
     private static readonly Guid IID_ID3D11Texture2D = new("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
 
     // vtable indices
-    private const int IDXGIDevice_GetAdapter_Index = 4;
-    private const int IDXGIAdapter_EnumOutputs_Index = 4;
-    private const int IDXGIOutput1_DuplicateOutput_Index = 19;
+    private const int IDXGIDevice_GetAdapter_Index = 7;
+    private const int IDXGIAdapter_EnumOutputs_Index = 7;
+    private const int IDXGIOutput1_DuplicateOutput_Index = 22;
     
     private const int IDXGIOutputDuplication_GetDesc_Index = 7;
     private const int IDXGIOutputDuplication_AcquireNextFrame_Index = 8;
@@ -541,6 +541,7 @@ internal sealed class ScreenCaptureDxgi : IDisposable
     public uint Width => _width;
     public uint Height => _height;
     public IntPtr Device => _device;
+    public IntPtr Context => _context;
 
     private static IntPtr GetVtableFunc(IntPtr obj, int index)
     {
