@@ -114,13 +114,34 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  bool _screenCaptureWasActive = false;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    // Only reconnect on resume if currently disconnected — avoids disrupting
-    // active connections, ongoing file transfers, or screen captures.
-    if (state == AppLifecycleState.resumed && !_status.connected && _lastHost != null && _token != null) {
-      unawaited(_connectHost(_lastHost!, _lastPort, wssPort: _lastWssPort));
+    final conn = _conn;
+
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      if (conn != null && conn.isCaptureActive) {
+        _screenCaptureWasActive = true;
+        conn.stopScreenCapture();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      // Only reconnect on resume if currently disconnected — avoids disrupting
+      // active connections, ongoing file transfers, or screen captures.
+      if (!_status.connected && _lastHost != null && _token != null) {
+        _screenCaptureWasActive = false;
+        unawaited(_connectHost(_lastHost!, _lastPort, wssPort: _lastWssPort));
+      } else if (conn != null && _screenCaptureWasActive) {
+        _screenCaptureWasActive = false;
+        if (conn.statusNotifier.value.connected) {
+          conn.startScreenCapture(
+            intervalMs: conn.lastCaptureIntervalMs,
+            width: conn.lastCaptureWidth,
+            quality: conn.lastCaptureQuality,
+          );
+        }
+      }
     }
   }
 

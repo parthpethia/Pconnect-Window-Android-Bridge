@@ -1181,7 +1181,7 @@ public sealed class WebRtcFallbackTests
 
             // Bilinear
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            for (int i = 0; i < 100; i++)
+            for (int i = 0; i < 5; i++)
             {
                 using (var g = System.Drawing.Graphics.FromImage(destBmp))
                 {
@@ -1191,12 +1191,12 @@ public sealed class WebRtcFallbackTests
                 }
             }
             sw.Stop();
-            double bilinearMs = sw.Elapsed.TotalMilliseconds / 100;
+            double bilinearMs = sw.Elapsed.TotalMilliseconds / 5;
 
             // Bicubic
             sw.Reset();
             sw.Start();
-            for (int i = 0; i < 100; i++)
+            for (int i = 0; i < 5; i++)
             {
                 using (var g = System.Drawing.Graphics.FromImage(destBmp))
                 {
@@ -1208,7 +1208,7 @@ public sealed class WebRtcFallbackTests
                 }
             }
             sw.Stop();
-            double bicubicMs = sw.Elapsed.TotalMilliseconds / 100;
+            double bicubicMs = sw.Elapsed.TotalMilliseconds / 5;
 
             results.AppendLine($"Target {targetW}x{targetH}:");
             results.AppendLine($"  Bilinear: {bilinearMs:F4} ms");

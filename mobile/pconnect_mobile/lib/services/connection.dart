@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -168,6 +166,11 @@ class PcConnection {
   Completer<Map<String, dynamic>>? _diagCompleter;
   Completer<String?>? _pairCompleter;
   int _screenFrameGen = 0;
+
+  bool get isCaptureActive => _captureActive;
+  int lastCaptureIntervalMs = 1000;
+  int lastCaptureWidth = 720;
+  int lastCaptureQuality = 65;
 
   PcConnection({required this.deviceId});
 
@@ -434,6 +437,18 @@ class PcConnection {
           }
           break;
 
+        case 'uipiBlocked':
+          _setStatus(ConnectionStatus(
+            connected: currentStatus.connected,
+            needsPairing: currentStatus.needsPairing,
+            pcName: currentStatus.pcName,
+            error: 'Input blocked by Windows User Account Control (UAC). Run Agent as Administrator.',
+            role: currentStatus.role,
+            screenStream: currentStatus.screenStream,
+            screenStreamModes: currentStatus.screenStreamModes,
+          ));
+          break;
+
         case 'error':
           _handshakeTimer?.cancel();
           _handshakeTimer = null;
@@ -684,6 +699,9 @@ class PcConnection {
   // ── Screen Capture ──
   void startScreenCapture({int intervalMs = 1000, int width = 720, int quality = 65}) {
     _captureActive = true;
+    lastCaptureIntervalMs = intervalMs;
+    lastCaptureWidth = width;
+    lastCaptureQuality = quality;
     final mode = currentStatus.effectiveScreenStream;
     if (mode == ScreenStreamModes.webRtcV1) {
       _startWebRtc(width: width, quality: quality);
@@ -777,6 +795,9 @@ class PcConnection {
   }
 
   Future<void> _fallbackFromWebRtc({bool rescheduleRetry = true}) async {
+    if (_channel != null) {
+      _send({'v': 1, 'type': 'webrtcFailed'});
+    }
     _webrtcTimeout?.cancel();
     _webrtcTimeout = null;
 
@@ -924,6 +945,10 @@ class PcConnection {
       screenStreamModes: currentStatus.screenStreamModes,
     ));
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    if (preservePairing) {
+      return; // Stop automatic reconnects until user explicitly acts
+    }
     _reconnectTimer = Timer(Duration(milliseconds: _reconnectDelayMs), () {
       if (_disposed) return;
       // Cap at 30s instead of 5s to reduce battery drain during prolonged outages
@@ -941,6 +966,13 @@ class PcConnection {
     _channel?.sink.close();
     _statusController.close();
     statusNotifier.dispose();
+    clipboardHistoryNotifier.dispose();
+    activeTransfersNotifier.dispose();
+    recentFilesNotifier.dispose();
+    appListNotifier.dispose();
+    commandListNotifier.dispose();
+    logEntriesNotifier.dispose();
+    screenFrameNotifier.dispose();
     webrtcRendererNotifier.dispose();
     _webrtcTimeout?.cancel();
     _rtcRenderer?.dispose();

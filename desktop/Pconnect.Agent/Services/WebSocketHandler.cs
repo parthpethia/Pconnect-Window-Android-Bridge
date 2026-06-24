@@ -93,16 +93,54 @@ internal sealed class WebSocketHandler
         string? negotiatedScreenStream = null;
         var inputDispatcher = new InputDispatcher(new KeyboardInjector());
 
+        Action onInputBlocked = () =>
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (ws.State == WebSocketState.Open)
+                    {
+                        await SendAsync(ws, new { v = 1, type = "uipiBlocked" }, ct);
+                    }
+                }
+                catch { /* ignore */ }
+            });
+        };
+        KeyboardInjector.InputBlocked += onInputBlocked;
+
         void CleanupWebRtcResources()
         {
             webRtcCts?.Cancel();
             bool joined = true;
             if (webRtcCaptureThread != null && webRtcCaptureThread.IsAlive)
             {
-                joined = webRtcCaptureThread.Join(1000);
+                joined = webRtcCaptureThread.Join(4000);
                 if (!joined)
                 {
-                    Console.WriteLine("[WebSocketHandler] Warning: WebRTC capture thread did not terminate within 1000ms. Skipping disposal of shared D3D11 resources to prevent race condition.");
+                    Console.WriteLine("[WebSocketHandler] Warning: WebRTC capture thread did not terminate within 4000ms. Handing off to background thread for deferred disposal.");
+                    
+                    var captureToDispose = dxgiCapture;
+                    var encoderToDispose = h264Encoder;
+                    var threadToJoin = webRtcCaptureThread;
+
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        try
+                        {
+                            threadToJoin.Join();
+                            captureToDispose?.Dispose();
+                            encoderToDispose?.Dispose();
+                            Console.WriteLine("[WebSocketHandler] Background WebRTC cleanup complete.");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[WebSocketHandler] Error in background WebRTC cleanup: {ex.Message}");
+                        }
+                    });
+
+                    dxgiCapture = null;
+                    h264Encoder = null;
                 }
             }
             webRtcCaptureThread = null;
@@ -846,28 +884,60 @@ internal sealed class WebSocketHandler
                                                      if (h264Encoder != null && session != null)
                                                      {
                                                          ReadOnlyMemory<byte> nals;
-                                                         if (h264Encoder.UseGpuPath)
+                                                         try
                                                          {
-                                                             nals = h264Encoder.EncodeGpuTexture(frame.Texture, targetWidth, targetHeight, false);
-                                                         }
-                                                         else
-                                                         {
-                                                             byte[]? rawBytes = dxgiCapture.CopyFrameToCpu(frame.Texture);
-                                                             if (rawBytes != null)
+                                                             if (h264Encoder.UseGpuPath)
                                                              {
-                                                                 if (processedBuffer == null || processedBuffer.Length != targetWidth * targetHeight * 4)
-                                                                 {
-                                                                     processedBuffer = new byte[targetWidth * targetHeight * 4];
-                                                                 }
-                                                                 ProcessCpuFrame(rawBytes, (int)dxgiCapture.Width, (int)dxgiCapture.Height, processedBuffer, targetWidth, targetHeight);
-                                                                 nals = h264Encoder.Encode(processedBuffer, targetWidth, targetHeight, false);
+                                                                 nals = h264Encoder.EncodeGpuTexture(frame.Texture, targetWidth, targetHeight, false);
                                                              }
                                                              else
                                                              {
-                                                                 nals = ReadOnlyMemory<byte>.Empty;
+                                                                 byte[]? rawBytes = dxgiCapture.CopyFrameToCpu(frame.Texture);
+                                                                 if (rawBytes != null)
+                                                                 {
+                                                                     if (processedBuffer == null || processedBuffer.Length != targetWidth * targetHeight * 4)
+                                                                     {
+                                                                         processedBuffer = new byte[targetWidth * targetHeight * 4];
+                                                                     }
+                                                                     ProcessCpuFrame(rawBytes, (int)dxgiCapture.Width, (int)dxgiCapture.Height, processedBuffer, targetWidth, targetHeight);
+                                                                     nals = h264Encoder.Encode(processedBuffer, targetWidth, targetHeight, false);
+                                                                 }
+                                                                 else
+                                                                 {
+                                                                     nals = ReadOnlyMemory<byte>.Empty;
+                                                                 }
                                                              }
                                                          }
- 
+                                                         catch (Exception encEx)
+                                                         {
+                                                             Console.WriteLine($"[WebSocketHandler] Encoder error (likely resolution/mode change): {encEx.Message}. Re-initializing encoder.");
+                                                             try
+                                                             {
+                                                                 dxgiCapture.Initialize();
+                                                                 int newWidth = (int)dxgiCapture.Width;
+                                                                 int newHeight = (int)dxgiCapture.Height;
+                                                                 if (clientWidth > 0 && clientWidth < newWidth)
+                                                                 {
+                                                                     double ratio = (double)clientWidth / newWidth;
+                                                                     targetWidth = (clientWidth / 2) * 2;
+                                                                     targetHeight = ((int)(newHeight * ratio) / 2) * 2;
+                                                                 }
+                                                                 else
+                                                                 {
+                                                                     targetWidth = (newWidth / 2) * 2;
+                                                                     targetHeight = (newHeight / 2) * 2;
+                                                                 }
+                                                                 h264Encoder?.Dispose();
+                                                                 h264Encoder = new H264EncoderService();
+                                                                 h264Encoder.Initialize(targetWidth, targetHeight, 30, targetBitrate, dxgiCapture.Device);
+                                                             }
+                                                             catch (Exception reinitEx)
+                                                             {
+                                                                 Console.WriteLine($"[WebSocketHandler] Failed to re-initialize encoder during recovery: {reinitEx.Message}");
+                                                             }
+                                                             nals = ReadOnlyMemory<byte>.Empty;
+                                                         }
+                                  
                                                          if (nals.Length > 0)
                                                          {
                                                              session.SendVideoFrame(nals, 33);
@@ -930,9 +1000,13 @@ internal sealed class WebSocketHandler
                         catch (Exception ex)
                         {
                             await SendAsync(ws, new { v = 1, type = "webrtcDebugError", message = ex.ToString() }, ct);
-                            Console.WriteLine($"[WebSocketHandler] Failed to setup WebRTC: {ex.Message}");
                             await HandleWebRtcFallbackAsync();
                         }
+                        break;
+
+                    case "webrtcfailed":
+                        // mobile sends webrtcFailed, normalized to lowercase here
+                        await HandleWebRtcFallbackAsync();
                         break;
 
                     case "webrtcice":
@@ -1096,6 +1170,8 @@ internal sealed class WebSocketHandler
         }
         finally
         {
+            KeyboardInjector.InputBlocked -= onInputBlocked;
+
             CleanupWebRtcResources();
 
             screenCapture?.Dispose();

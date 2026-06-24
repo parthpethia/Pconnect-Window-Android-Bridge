@@ -6,6 +6,8 @@ namespace Pconnect.Agent.Services;
 
 internal class KeyboardInjector
 {
+    public static event Action? InputBlocked;
+
     private const int INPUT_MOUSE = 0;
     private const int INPUT_KEYBOARD = 1;
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
@@ -78,6 +80,20 @@ internal class KeyboardInjector
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+    private void SendInputInternal(INPUT[] inputs)
+    {
+        if (inputs == null || inputs.Length == 0) return;
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (sent == 0)
+        {
+            int err = Marshal.GetLastWin32Error();
+            if (err == 5) // ERROR_ACCESS_DENIED
+            {
+                InputBlocked?.Invoke();
+            }
+        }
+    }
+
     public virtual void MoveMouseBy(int dx, int dy)
     {
         if (dx == 0 && dy == 0)
@@ -90,7 +106,7 @@ internal class KeyboardInjector
             Mouse(dx, dy, 0, MOUSEEVENTF_MOVE),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void ScrollWheel(int wheelDelta)
@@ -105,7 +121,7 @@ internal class KeyboardInjector
             Mouse(0, 0, unchecked((uint)wheelDelta), MOUSEEVENTF_WHEEL),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void LeftDown() => MouseButton(MOUSEEVENTF_LEFTDOWN);
@@ -122,7 +138,7 @@ internal class KeyboardInjector
             Mouse(0, 0, 0, MOUSEEVENTF_LEFTDOWN),
             Mouse(0, 0, 0, MOUSEEVENTF_LEFTUP),
         };
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void RightClick()
@@ -132,7 +148,7 @@ internal class KeyboardInjector
             Mouse(0, 0, 0, MOUSEEVENTF_RIGHTDOWN),
             Mouse(0, 0, 0, MOUSEEVENTF_RIGHTUP),
         };
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void MiddleClick()
@@ -142,7 +158,7 @@ internal class KeyboardInjector
             Mouse(0, 0, 0, MOUSEEVENTF_MIDDLEDOWN),
             Mouse(0, 0, 0, MOUSEEVENTF_MIDDLEUP),
         };
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendVk(ushort vk)
@@ -153,7 +169,7 @@ internal class KeyboardInjector
             Key(vk, '\0', KEYEVENTF_KEYUP),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendVkDown(ushort vk, bool extended)
@@ -163,7 +179,7 @@ internal class KeyboardInjector
             Key(vk, '\0', extended ? KEYEVENTF_EXTENDEDKEY : 0),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendVkUp(ushort vk, bool extended)
@@ -173,7 +189,7 @@ internal class KeyboardInjector
             Key(vk, '\0', (extended ? KEYEVENTF_EXTENDEDKEY : 0) | KEYEVENTF_KEYUP),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendWinL()
@@ -186,7 +202,7 @@ internal class KeyboardInjector
             Key(VK_LWIN, '\0', KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendBackspaces(int count)
@@ -204,7 +220,7 @@ internal class KeyboardInjector
             inputs[idx++] = Key(VK_BACK, '\0', KEYEVENTF_KEYUP);
         }
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendUnicode(string text)
@@ -223,7 +239,7 @@ internal class KeyboardInjector
             inputs[idx++] = Key(0, ch, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
         }
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendCtrlA()
@@ -236,7 +252,7 @@ internal class KeyboardInjector
             Key(VK_CONTROL, '\0', KEYEVENTF_KEYUP),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual void SendCtrlV()
@@ -249,7 +265,7 @@ internal class KeyboardInjector
             Key(VK_CONTROL, '\0', KEYEVENTF_KEYUP),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     public virtual bool PasteTextSafely(string text)
@@ -410,7 +426,7 @@ internal class KeyboardInjector
             Mouse(0, 0, 0, flags),
         };
 
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputInternal(inputs);
     }
 
     private static INPUT Mouse(int dx, int dy, uint mouseData, uint flags)
