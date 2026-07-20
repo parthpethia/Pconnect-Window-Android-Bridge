@@ -13,6 +13,11 @@ internal static class KeyComboService
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP = 0x0002;
 
+    // IMPORTANT: The INPUT struct size must match Win32's sizeof(INPUT) exactly.
+    // On x64, the InputUnion must be sized to its largest member (MOUSEINPUT = 28 bytes),
+    // making INPUT 40 bytes total. If the union only contains KEYBDINPUT (24 bytes),
+    // Marshal.SizeOf<INPUT>() returns a smaller value and SendInput silently fails
+    // because cbSize doesn't match the expected stride.
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
     {
@@ -23,7 +28,20 @@ internal static class KeyComboService
     [StructLayout(LayoutKind.Explicit)]
     private struct InputUnion
     {
+        [FieldOffset(0)] public MOUSEINPUT mi;
         [FieldOffset(0)] public KEYBDINPUT ki;
+        [FieldOffset(0)] public HARDWAREINPUT hi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public nuint dwExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -34,6 +52,14 @@ internal static class KeyComboService
         public uint dwFlags;
         public uint time;
         public nuint dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -48,7 +74,10 @@ internal static class KeyComboService
     // Modifier keys
     private static readonly HashSet<string> Modifiers = new(StringComparer.OrdinalIgnoreCase)
     {
-        "ctrl", "control", "shift", "alt", "win", "windows", "lwin", "rwin", "meta", "super"
+        "ctrl", "control", "lctrl", "rctrl",
+        "shift", "lshift", "rshift",
+        "alt", "lalt", "ralt", "option",
+        "win", "windows", "lwin", "rwin", "meta", "super", "cmd", "command"
     };
 
     /// <summary>
@@ -59,18 +88,18 @@ internal static class KeyComboService
     {
         if (keys == null || keys.Count == 0) return false;
 
-        var inputs = new List<INPUT>();
-
         // Separate modifiers and action keys
         var modifierVks = new List<(ushort vk, bool extended)>();
         var actionVks = new List<(ushort vk, bool extended)>();
 
         foreach (var key in keys)
         {
-            var resolved = ResolveKey(key.Trim().ToLowerInvariant());
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            var trimmed = key.Trim();
+            var resolved = ResolveKey(trimmed.ToLowerInvariant());
             if (resolved == null) return false;
 
-            if (Modifiers.Contains(key.Trim()))
+            if (Modifiers.Contains(trimmed))
             {
                 modifierVks.Add(resolved.Value);
             }
@@ -80,62 +109,102 @@ internal static class KeyComboService
             }
         }
 
-        // Press modifiers down
-        foreach (var (vk, ext) in modifierVks)
+        if (modifierVks.Count == 0 && actionVks.Count == 0) return false;
+
+        // 1. Press modifier keys down first
+        if (modifierVks.Count > 0)
         {
-            inputs.Add(KeyDown(vk, ext));
+            var modDownInputs = new INPUT[modifierVks.Count];
+            for (int i = 0; i < modifierVks.Count; i++)
+            {
+                var (vk, ext) = modifierVks[i];
+                modDownInputs[i] = KeyDown(vk, ext);
+            }
+
+            if (!SendBatch(modDownInputs)) return false;
+
+            // Small delay for OS Shell (e.g. explorer.exe AltTab handler) to register modifier state
+            Thread.Sleep(15);
         }
 
-        // Send modifier key-downs first
-        if (inputs.Count > 0)
+        // 2. Press and release action keys
+        if (actionVks.Count > 0)
         {
-            var modArr = inputs.ToArray();
-            SendInput((uint)modArr.Length, modArr, Marshal.SizeOf<INPUT>());
-            Thread.Sleep(30); // Allow OS to register modifier state
+            var actionInputs = new INPUT[actionVks.Count * 2];
+            int idx = 0;
+            foreach (var (vk, ext) in actionVks)
+            {
+                actionInputs[idx++] = KeyDown(vk, ext);
+                actionInputs[idx++] = KeyUp(vk, ext);
+            }
+
+            if (!SendBatch(actionInputs))
+            {
+                // Clean up modifiers on error
+                ReleaseModifiers(modifierVks);
+                return false;
+            }
+
+            // Small pause before releasing modifiers if modifiers were active
+            if (modifierVks.Count > 0)
+            {
+                Thread.Sleep(15);
+            }
         }
 
-        // Press and release action keys
-        var actionInputs = new List<INPUT>();
-        foreach (var (vk, ext) in actionVks)
+        // 3. Release modifier keys in reverse order
+        if (modifierVks.Count > 0)
         {
-            actionInputs.Add(KeyDown(vk, ext));
-            actionInputs.Add(KeyUp(vk, ext));
-        }
-
-        if (actionInputs.Count > 0)
-        {
-            var actArr = actionInputs.ToArray();
-            SendInput((uint)actArr.Length, actArr, Marshal.SizeOf<INPUT>());
-            Thread.Sleep(30); // Allow OS to register key press
-        }
-
-        // Release modifiers in reverse
-        var releaseInputs = new List<INPUT>();
-        for (int i = modifierVks.Count - 1; i >= 0; i--)
-        {
-            var (vk, ext) = modifierVks[i];
-            releaseInputs.Add(KeyUp(vk, ext));
-        }
-
-        if (releaseInputs.Count > 0)
-        {
-            var relArr = releaseInputs.ToArray();
-            SendInput((uint)relArr.Length, relArr, Marshal.SizeOf<INPUT>());
+            ReleaseModifiers(modifierVks);
         }
 
         return true;
     }
 
-    private static (ushort vk, bool extended)? ResolveKey(string key)
+    private static bool SendBatch(INPUT[] inputs)
+    {
+        if (inputs == null || inputs.Length == 0) return true;
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+
+        if (sent == 0)
+        {
+            int err = Marshal.GetLastWin32Error();
+            Console.WriteLine($"[KeyComboService] SendInput failed: sent=0, error={err}");
+            if (err == 5) // ERROR_ACCESS_DENIED (UIPI)
+            {
+                KeyboardInjector.RaiseInputBlocked();
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void ReleaseModifiers(List<(ushort vk, bool extended)> modifierVks)
+    {
+        var modUpInputs = new INPUT[modifierVks.Count];
+        int idx = 0;
+        for (int i = modifierVks.Count - 1; i >= 0; i--)
+        {
+            var (vk, ext) = modifierVks[i];
+            modUpInputs[idx++] = KeyUp(vk, ext);
+        }
+        SendBatch(modUpInputs);
+    }
+
+    internal static (ushort vk, bool extended)? ResolveKey(string key)
     {
         return key switch
         {
             // Modifiers
-            "ctrl" or "control" => (0x11, false),    // VK_CONTROL
-            "shift" => (0x10, false),                 // VK_SHIFT
-            "alt" => (0x12, false),                   // VK_MENU
-            "win" or "windows" or "lwin" or "meta" or "super" => (0x5B, true), // VK_LWIN
-            "rwin" => (0x5C, true),                   // VK_RWIN
+            "ctrl" or "control" or "lctrl" => (0x11, false),    // VK_CONTROL
+            "rctrl" => (0xA5, true),                            // VK_RCONTROL
+            "shift" or "lshift" => (0x10, false),               // VK_SHIFT
+            "rshift" => (0xA1, false),                          // VK_RSHIFT
+            "alt" or "lalt" or "option" => (0x12, false),       // VK_MENU
+            "ralt" => (0xA5, true),                             // VK_RMENU
+            "win" or "windows" or "lwin" or "meta" or "super" or "cmd" or "command" => (0x5B, true), // VK_LWIN
+            "rwin" => (0x5C, true),                             // VK_RWIN
 
             // Navigation
             "enter" or "return" => (0x0D, false),
@@ -176,6 +245,15 @@ internal static class KeyComboService
             "pause" => (0x13, false),
             "capslock" => (0x14, false),
             "numlock" => (0x90, false),
+
+            // Volume & Media keys
+            "vol_up" or "volume_up" or "volup" or "volumeup" or "volume_up_key" or "vol+" => (0xAF, true), // VK_VOLUME_UP
+            "vol_down" or "volume_down" or "voldown" or "volumedown" or "volume_down_key" or "vol-" => (0xAE, true), // VK_VOLUME_DOWN
+            "mute" or "vol_mute" or "volume_mute" or "volumemute" => (0xAD, true), // VK_VOLUME_MUTE
+            "play_pause" or "play" or "pause" or "playpause" => (0xB3, true), // VK_MEDIA_PLAY_PAUSE
+            "next" or "next_track" or "nexttrack" => (0xB0, true), // VK_MEDIA_NEXT_TRACK
+            "prev" or "previous" or "prev_track" or "prevtrack" => (0xB1, true), // VK_MEDIA_PREV_TRACK
+            "stop" => (0xB2, true), // VK_MEDIA_STOP
 
             // Letters a-z → VK 0x41-0x5A
             var s when s.Length == 1 && s[0] >= 'a' && s[0] <= 'z' =>

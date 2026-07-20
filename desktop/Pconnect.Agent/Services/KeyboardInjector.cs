@@ -7,6 +7,7 @@ namespace Pconnect.Agent.Services;
 internal class KeyboardInjector
 {
     public static event Action? InputBlocked;
+    public static void RaiseInputBlocked() => InputBlocked?.Invoke();
 
     private const int INPUT_MOUSE = 0;
     private const int INPUT_KEYBOARD = 1;
@@ -283,8 +284,8 @@ internal class KeyboardInjector
 
     private bool PasteTextSafelyInternal(string text)
     {
-        IDataObject backupData = null;
-        Dictionary<string, object> savedFormats = null;
+        IDataObject? backupData = null;
+        Dictionary<string, object?>? savedFormats = null;
         const int retries = 3;
 
         // 1. Capture original clipboard with retries
@@ -294,7 +295,7 @@ internal class KeyboardInjector
             try
             {
                 backupData = Clipboard.GetDataObject();
-                savedFormats = new Dictionary<string, object>();
+                savedFormats = new Dictionary<string, object?>();
                 if (backupData != null)
                 {
                     string[] formats = backupData.GetFormats(false);

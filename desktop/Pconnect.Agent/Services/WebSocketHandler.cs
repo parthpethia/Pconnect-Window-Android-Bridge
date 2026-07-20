@@ -22,6 +22,7 @@ internal sealed class WebSocketHandler
     private readonly FileTransferManager _fileTransfer = new();
     private readonly CustomCommandService _customCommands = new();
     private readonly AuditLogService _auditLog = new();
+    private readonly SystemMetricsService _metrics = new();
 
     private readonly Action<string, string?>? _onDeviceAuthed;
     private readonly Action<string>? _onDeviceDisconnected;
@@ -34,8 +35,10 @@ internal sealed class WebSocketHandler
         "lock", "text", "launch", "show", "mouse", "keyboard", "volume",
         "brightness", "shutdown", "clipboard", "fileTransfer", "recentFiles",
         "keyCombo", "mediaKey", "screenCapture", "appList", "customCommands",
-        "auditLog", "notification"
+        "auditLog", "notification", "systemControl", "systemMetrics"
     };
+
+    public AuditLogService AuditLog => _auditLog;
 
     internal void ConfigureSafeMode(SafeStartupOptions safe) => _safe = safe;
 
@@ -84,6 +87,8 @@ internal sealed class WebSocketHandler
         byte[]? integrityKey = null;
         var lastCmdSeq = 0;
         IReadOnlyList<string>? lastClientScreenStreamModes = null;
+        bool isLanSession = LanAddressHelper.IsSameSubnet(remoteIp);
+        int activeWebRtcTimeoutMs = isLanSession ? 2000 : WebRtcTimeoutMs;
 
         WebRtcSessionService? webRtcSession = null;
         ScreenCaptureDxgi? dxgiCapture = null;
@@ -194,7 +199,7 @@ internal sealed class WebSocketHandler
                         _ = SendScreenFrameAsync(ws, b64, w, h, ct);
                     });
                 }
-                screenCapture.Start(1000, 720, 65);
+                screenCapture.Start(120, 720, 60);
                 _auditLog.Log(deviceName, $"webrtcFallback:screenCaptureStart:{fallbackMode}");
             }
         }
@@ -701,21 +706,157 @@ internal sealed class WebSocketHandler
                         }
                         break;
 
+                    case "systemcontrol":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        var sysAction = (msg.GetStringOrNull("action") ?? "").Trim().ToLowerInvariant();
+                        _auditLog.Log(deviceName, $"systemControl:{sysAction}");
+                        switch (sysAction)
+                        {
+                            case "sleep":
+                                await SendAsync(ws, _pc.Sleep() ? new { v = 1, type = "ok" } : (object)new { v = 1, type = "error", message = "Sleep failed" }, ct);
+                                break;
+                            case "restart":
+                                await SendAsync(ws, _pc.Restart() ? new { v = 1, type = "ok" } : (object)new { v = 1, type = "error", message = "Restart failed" }, ct);
+                                break;
+                            case "taskmanager":
+                                _pc.OpenTaskManager();
+                                await SendAsync(ws, new { v = 1, type = "ok" }, ct);
+                                break;
+                            case "desktop":
+                                _pc.ShowDesktop();
+                                await SendAsync(ws, new { v = 1, type = "ok" }, ct);
+                                break;
+                            case "taskview":
+                                _pc.TaskView();
+                                await SendAsync(ws, new { v = 1, type = "ok" }, ct);
+                                break;
+                            case "mute":
+                                _pc.ToggleMuteAudio();
+                                await SendAsync(ws, new { v = 1, type = "ok" }, ct);
+                                break;
+                            default:
+                                await SendAsync(ws, new { v = 1, type = "error", message = $"Unknown systemControl action: {sysAction}" }, ct);
+                                break;
+                        }
+                        break;
+
+                    case "getsystemmetrics":
+                        var snapshot = _metrics.GetSnapshot();
+                        await SendAsync(ws, new
+                        {
+                            v = 1,
+                            type = "systemMetricsResponse",
+                            cpuPercent = snapshot.CpuPercent,
+                            ramPercent = snapshot.RamPercent,
+                            totalRamMb = snapshot.TotalRamMb,
+                            usedRamMb = snapshot.UsedRamMb,
+                            uptimeSeconds = (long)snapshot.Uptime.TotalSeconds,
+                            processCount = snapshot.ProcessCount
+                        }, ct);
+                        break;
+
                     case "filetransferstart":
                         if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
                         var ftId = msg.GetStringOrNull("id");
                         var ftFile = msg.GetStringOrNull("filename");
                         var ftSize = msg.GetLongOrDefault("size", 0L);
+                        var ftSha = msg.GetStringOrNull("sha256");
+                        var ftProto = msg.GetIntOrDefault("protocolVersion", 1);
                         if (string.IsNullOrWhiteSpace(ftId) || string.IsNullOrWhiteSpace(ftFile) || ftSize <= 0)
                         {
                             await SendAsync(ws, new { v = 1, type = "error", message = "Invalid transfer parameters" }, ct);
                             break;
                         }
-                        var ftResult = _fileTransfer.StartTransfer(ftId, ftFile, ftSize);
+                        if (ftProto != 2)
+                        {
+                            await SendAsync(ws, new { v = 1, type = "fileTransferAck", id = ftId, ready = false, error = $"Protocol version mismatch: expected v2, got v{ftProto}", protocolVersion = 2 }, ct);
+                            break;
+                        }
+                        var ftResult = _fileTransfer.StartTransfer(ftId, ftFile, ftSize, ftSha, out var ftError);
                         _auditLog.Log(deviceName, $"fileTransferStart:{ftFile}");
                         await SendAsync(ws, ftResult != null
-                            ? (object)new { v = 1, type = "fileTransferAck", id = ftId, ready = true }
-                            : new { v = 1, type = "error", message = "Failed to start transfer" }, ct);
+                            ? (object)new { v = 1, type = "fileTransferAck", id = ftId, ready = true, protocolVersion = 2 }
+                            : new { v = 1, type = "fileTransferAck", id = ftId, ready = false, error = ftError ?? "Failed to start transfer", protocolVersion = 2 }, ct);
+                        break;
+
+                    case "filetransferresume":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        var rId = msg.GetStringOrNull("id");
+                        var rFile = msg.GetStringOrNull("filename");
+                        var rSize = msg.GetLongOrDefault("size", 0L);
+                        var rSha = msg.GetStringOrNull("sha256");
+                        var rProto = msg.GetIntOrDefault("protocolVersion", 1);
+                        if (string.IsNullOrWhiteSpace(rId) || string.IsNullOrWhiteSpace(rFile) || rSize <= 0)
+                        {
+                            await SendAsync(ws, new { v = 1, type = "error", message = "Invalid resume parameters" }, ct);
+                            break;
+                        }
+                        if (rProto != 2)
+                        {
+                            await SendAsync(ws, new { v = 1, type = "fileTransferResumeAck", id = rId, ready = false, error = $"Protocol version mismatch: expected v2, got v{rProto}", protocolVersion = 2 }, ct);
+                            break;
+                        }
+                        var resOk = _fileTransfer.ResumeTransfer(rId, rFile, rSize, rSha, out var highestContiguous, out var receivedSet, out var rError);
+                        _auditLog.Log(deviceName, $"fileTransferResume:{rFile}");
+                        await SendAsync(ws, resOk
+                            ? (object)new { v = 1, type = "fileTransferResumeAck", id = rId, ready = true, highestContiguousChunk = highestContiguous, receivedChunks = receivedSet.ToList(), protocolVersion = 2 }
+                            : new { v = 1, type = "fileTransferResumeAck", id = rId, ready = false, error = rError ?? "Failed to resume transfer", protocolVersion = 2 }, ct);
+                        break;
+
+                    case "filetransferdiscard":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        var dId = msg.GetStringOrNull("id");
+                        if (!string.IsNullOrWhiteSpace(dId))
+                        {
+                            _fileTransfer.DiscardTransfer(dId!);
+                            _auditLog.Log(deviceName, $"fileTransferDiscard:{dId}");
+                        }
+                        await SendAsync(ws, new { v = 1, type = "fileTransferDiscardAck", id = dId, success = true }, ct);
+                        break;
+
+                    case "filetransferlistdir":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        var dirPath = msg.GetStringOrNull("path");
+                        var items = _fileTransfer.ListAllowedDirectory(dirPath);
+                        await SendAsync(ws, new { v = 1, type = "fileTransferDirList", path = dirPath, items, status = "ok" }, ct);
+                        break;
+
+                    case "filetransferdownloadstart":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        var dlId = msg.GetStringOrNull("id");
+                        var dlPath = msg.GetStringOrNull("path");
+                        if (string.IsNullOrWhiteSpace(dlId) || string.IsNullOrWhiteSpace(dlPath))
+                        {
+                            await SendAsync(ws, new { v = 1, type = "error", message = "Invalid download parameters" }, ct);
+                            break;
+                        }
+                        var dlOk = _fileTransfer.StartDownload(dlId, dlPath!, out var dlName, out var dlSize, out var dlSha, out var dlError);
+                        _auditLog.Log(deviceName, $"fileTransferDownloadStart:{dlName}");
+                        await SendAsync(ws, dlOk
+                            ? (object)new { v = 1, type = "fileTransferDownloadAck", id = dlId, ready = true, filename = dlName, size = dlSize, sha256 = dlSha, protocolVersion = 2 }
+                            : new { v = 1, type = "fileTransferDownloadAck", id = dlId, ready = false, error = dlError ?? "Failed to start download", protocolVersion = 2 }, ct);
+                        break;
+
+                    case "filetransferdownloadchunk":
+                        if (!RequireAdmin()) break;
+                        var dlcId = msg.GetStringOrNull("id");
+                        var dlcPath = msg.GetStringOrNull("path");
+                        var dlcIdx = msg.GetIntOrDefault("chunkIndex", -1);
+                        if (string.IsNullOrWhiteSpace(dlcId) || string.IsNullOrWhiteSpace(dlcPath) || dlcIdx < 0)
+                        {
+                            await SendAsync(ws, new { v = 1, type = "error", message = "Invalid download chunk parameters" }, ct);
+                            break;
+                        }
+                        var chunkBytes = _fileTransfer.ReadDownloadChunk(dlcPath!, dlcIdx);
+                        if (chunkBytes != null)
+                        {
+                            var b64Data = Convert.ToBase64String(chunkBytes);
+                            await SendAsync(ws, new { v = 1, type = "fileTransferDownloadChunkData", id = dlcId, chunkIndex = dlcIdx, data = b64Data, size = chunkBytes.Length }, ct);
+                        }
+                        else
+                        {
+                            await SendAsync(ws, new { v = 1, type = "error", message = "Failed to read download chunk" }, ct);
+                        }
                         break;
 
                     case "filetransferchunk":
@@ -733,12 +874,22 @@ internal sealed class WebSocketHandler
                             var chBytes = Convert.FromBase64String(chData);
                             if (_fileTransfer.WriteChunk(chId, chIdx, chBytes))
                             {
-                                var prog = _fileTransfer.GetProgress(chId);
+                                // 1. Flow control: immediate ACK for in-flight windowing
                                 await SendAsync(ws, new
                                 {
-                                    v = 1, type = "fileTransferProgress", id = chId,
-                                    chunkIndex = chIdx, received = prog?.received ?? 0, total = prog?.total ?? 0
+                                    v = 1, type = "fileTransferAckChunk", id = chId, chunkIndex = chIdx
                                 }, ct);
+
+                                // 2. UI progress update: throttled to 250ms interval
+                                if (_fileTransfer.ShouldReportProgress(chId, 250))
+                                {
+                                    var prog = _fileTransfer.GetProgress(chId);
+                                    await SendAsync(ws, new
+                                    {
+                                        v = 1, type = "fileTransferProgress", id = chId,
+                                        chunkIndex = chIdx, received = prog?.received ?? 0, total = prog?.total ?? 0
+                                    }, ct);
+                                }
                             }
                             else
                             {
@@ -814,10 +965,13 @@ internal sealed class WebSocketHandler
 
                             h264Encoder = new H264EncoderService();
                             h264Encoder.Initialize(targetWidth, targetHeight, 30, targetBitrate, dxgiCapture.Device);
+                            Console.WriteLine($"[WebSocketHandler] Selected H.264 Encoder Tier: {h264Encoder.EncoderName} (Hardware: {h264Encoder.IsHardware}, GPU-resident: {h264Encoder.UseGpuPath})");
+                            _auditLog.Log(deviceName, $"encoderTier:{h264Encoder.EncoderName}");
 
                             bool isConnected = false;
                             bool isFailed = false;
 
+                            bool hostOnlyAttempt = isLanSession;
                             webRtcSession = new WebRtcSessionService(
                                 onInputPacket: (data) =>
                                 {
@@ -842,16 +996,39 @@ internal sealed class WebSocketHandler
                                         isConnected = true;
                                     }
                                     Console.WriteLine("[WebSocketHandler] WebRTC connected. Starting capture loop.");
+                                    var aimdController = new AimdBitrateController(targetBitrate, targetBitrate, ScreenStreamNegotiation.MinBitrateFloorKbps);
+                                    long lastAimdTick = 0;
+
                                     webRtcCaptureThread = new Thread(() =>
-                                     {
-                                         try
-                                         {
+                                    {
+                                        try
+                                        {
                                              SendAsync(ws, new { v = 1, type = "webrtcReady" }, ct).GetAwaiter().GetResult();
- 
+
                                              byte[]? processedBuffer = null;
- 
+
                                              while (!localCts.IsCancellationRequested && ws.State == WebSocketState.Open)
                                              {
+                                                 long nowTicks = Environment.TickCount64;
+                                                 if (nowTicks - lastAimdTick >= 300)
+                                                 {
+                                                     lastAimdTick = nowTicks;
+                                                     double lossFraction = webRtcSession?.GetLastLossFraction() ?? 0.0;
+                                                     double rttMs = webRtcSession?.GetLastRttMs() ?? 10.0;
+
+                                                     int nextRate = aimdController.Step(lossFraction, rttMs);
+                                                     if (nextRate < 0)
+                                                     {
+                                                         Console.WriteLine("[WebSocketHandler] Target bitrate dropped below 800 Kbps floor. Triggering JPEG fallback.");
+                                                         _ = HandleWebRtcFallbackAsync();
+                                                         break;
+                                                     }
+                                                     else if (h264Encoder != null && nextRate != h264Encoder.CurrentBitrateKbps)
+                                                     {
+                                                         h264Encoder.UpdateBitrate(nextRate);
+                                                     }
+                                                 }
+
                                                  DxgiFrame? frame = null;
                                                  try
                                                  {
@@ -861,10 +1038,11 @@ internal sealed class WebSocketHandler
                                                  {
                                                      Console.WriteLine($"[WebSocketHandler] DXGI capture error: {ex.Message}. Retrying after 500ms backoff and re-initialization.");
                                                      Thread.Sleep(500);
-                                                     try
-                                                     {
-                                                         dxgiCapture.Initialize();
-                                                     }
+                                                      try
+                                                      {
+                                                          dxgiCapture.Initialize();
+                                                          h264Encoder?.RequestKeyframe();
+                                                      }
                                                      catch (Exception initEx)
                                                      {
                                                          Console.WriteLine($"[WebSocketHandler] DXGI re-initialization failed: {initEx.Message}");
@@ -972,7 +1150,8 @@ internal sealed class WebSocketHandler
                                     }
                                     Console.WriteLine($"[WebSocketHandler] WebRTC connection failed: {reason}");
                                     await HandleWebRtcFallbackAsync();
-                                }
+                                },
+                                hostOnly: hostOnlyAttempt
                             );
 
                             string answerSdp = await webRtcSession.ProcessOfferAndCreateAnswer(offerSdp);
@@ -980,16 +1159,86 @@ internal sealed class WebSocketHandler
 
                             _ = Task.Run(async () =>
                             {
-                                await Task.Delay(WebRtcTimeoutMs);
+                                await Task.Delay(activeWebRtcTimeoutMs);
+                                bool shouldRetryStun = false;
                                 bool needsFallback = false;
                                 lock (localCts)
                                 {
                                     if (!isConnected && !isFailed)
                                     {
-                                        isFailed = true;
+                                        if (hostOnlyAttempt)
+                                        {
+                                            shouldRetryStun = true;
+                                        }
+                                        else
+                                        {
+                                            isFailed = true;
+                                            needsFallback = true;
+                                        }
+                                    }
+                                }
+
+                                if (shouldRetryStun)
+                                {
+                                    Console.WriteLine("[WebSocketHandler] Host-only ICE timed out on LAN (2s). Retrying once with STUN candidates enabled.");
+                                    hostOnlyAttempt = false;
+                                    try
+                                    {
+                                        webRtcSession?.Dispose();
+                                        webRtcSession = new WebRtcSessionService(
+                                            onInputPacket: (data) => inputDispatcher.Dispatch(data),
+                                            onIceCandidate: async (candidate) =>
+                                            {
+                                                await SendAsync(ws, new
+                                                {
+                                                    v = 1,
+                                                    type = "webrtcIce",
+                                                    candidate = candidate,
+                                                    sdpMid = "0",
+                                                    sdpMLineIndex = 0
+                                                }, ct);
+                                            },
+                                            onConnected: () =>
+                                            {
+                                                lock (localCts)
+                                                {
+                                                    if (isConnected || isFailed) return;
+                                                    isConnected = true;
+                                                }
+                                                Console.WriteLine("[WebSocketHandler] WebRTC connected after STUN retry.");
+                                            },
+                                            onFailed: async (reason) =>
+                                            {
+                                                lock (localCts)
+                                                {
+                                                    if (isFailed) return;
+                                                    isFailed = true;
+                                                }
+                                                await HandleWebRtcFallbackAsync();
+                                            },
+                                            hostOnly: false
+                                        );
+
+                                        string retryAnswerSdp = await webRtcSession.ProcessOfferAndCreateAnswer(offerSdp);
+                                        await SendAsync(ws, new { v = 1, type = "webrtcAnswer", sdp = retryAnswerSdp }, ct);
+
+                                        await Task.Delay(3000);
+                                        lock (localCts)
+                                        {
+                                            if (!isConnected && !isFailed)
+                                            {
+                                                isFailed = true;
+                                                needsFallback = true;
+                                            }
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine($"[WebSocketHandler] STUN retry failed: {ex.Message}");
                                         needsFallback = true;
                                     }
                                 }
+
                                 if (needsFallback)
                                 {
                                     Console.WriteLine("[WebSocketHandler] WebRTC connection timeout. Falling back to JPEG.");
@@ -1238,7 +1487,23 @@ internal sealed class WebSocketHandler
             if (result.EndOfMessage) break;
         }
 
-        var json = Encoding.UTF8.GetString(ms.ToArray());
+        var rawBytes = ms.ToArray();
+        if (rawBytes.Length >= 21 && rawBytes[0] == 0x02)
+        {
+            var trId = new Guid(rawBytes.AsSpan(1, 16)).ToString();
+            var chIdx = BinaryPrimitives.ReadInt32BigEndian(rawBytes.AsSpan(17, 4));
+            var dataB64 = Convert.ToBase64String(rawBytes, 21, rawBytes.Length - 21);
+
+            return new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+            {
+                ["type"] = JsonDocument.Parse("\"filetransferchunk\"").RootElement,
+                ["id"] = JsonDocument.Parse($"\"{trId}\"").RootElement,
+                ["chunkIndex"] = JsonDocument.Parse(chIdx.ToString(CultureInfo.InvariantCulture)).RootElement,
+                ["data"] = JsonDocument.Parse($"\"{dataB64}\"").RootElement
+            };
+        }
+
+        var json = Encoding.UTF8.GetString(rawBytes);
         try { return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json); }
         catch
         {

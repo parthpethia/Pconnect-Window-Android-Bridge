@@ -244,7 +244,7 @@ class _TrackpadTabState extends State<_TrackpadTab> {
                 color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(16),
                 border: _gyroMode
-                    ? Border.all(color: cs.primary.withOpacity(0.5), width: 2)
+                    ? Border.all(color: cs.primary.withValues(alpha: 0.5), width: 2)
                     : null,
               ),
               child: Center(
@@ -308,8 +308,11 @@ class _TrackpadTabState extends State<_TrackpadTab> {
   }
 
   Offset _centroid() {
+    if (_pointers.isEmpty) return Offset.zero;
     var sum = Offset.zero;
-    for (final p in _pointers.values) sum += p;
+    for (final p in _pointers.values) {
+      sum += p;
+    }
     return sum / _pointers.length.toDouble();
   }
 }

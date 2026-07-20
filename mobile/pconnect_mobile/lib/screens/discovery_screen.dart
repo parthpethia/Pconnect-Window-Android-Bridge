@@ -294,7 +294,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                     const SizedBox(height: 4),
                     Text(
                       'Check the pairing code shown on the PC tray popup.',
-                      style: TextStyle(fontSize: 12, color: cs.onTertiaryContainer.withOpacity(0.7)),
+                      style: TextStyle(fontSize: 12, color: cs.onTertiaryContainer.withValues(alpha: 0.7)),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -479,7 +479,6 @@ class _QrScanPage extends StatefulWidget {
 class _QrScanPageState extends State<_QrScanPage> {
   MobileScannerController? _controller;
   bool _handled = false;
-  bool _permissionGranted = false;
   bool _permissionDenied = false;
   bool _permissionPermanentlyDenied = false;
   bool _checking = true;
@@ -496,7 +495,6 @@ class _QrScanPageState extends State<_QrScanPage> {
 
     if (status.isGranted) {
       setState(() {
-        _permissionGranted = true;
         _checking = false;
         _controller = MobileScannerController();
       });
@@ -625,7 +623,7 @@ class _QrScanPageState extends State<_QrScanPage> {
                                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                                 child: Text(
                                   'Point at the QR code on the PC tray window',
-                                  style: TextStyle(color: Colors.white.withOpacity(0.9)),
+                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
                                 ),
                               ),
                             ),

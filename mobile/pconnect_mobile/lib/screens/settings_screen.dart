@@ -311,32 +311,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // ── Appearance ──
           _SectionHeader('Appearance'),
-          ValueListenableBuilder<ThemeMode>(
-            valueListenable: themeCtrl,
-            builder: (context, mode, _) {
-              return Column(
-                children: [
-                  RadioListTile<ThemeMode>(
-                    title: const Text('Dark'),
-                    value: ThemeMode.dark,
-                    groupValue: mode,
-                    onChanged: (v) => themeCtrl.setMode(v!),
-                  ),
-                  RadioListTile<ThemeMode>(
-                    title: const Text('Light'),
-                    value: ThemeMode.light,
-                    groupValue: mode,
-                    onChanged: (v) => themeCtrl.setMode(v!),
-                  ),
-                  RadioListTile<ThemeMode>(
-                    title: const Text('System'),
-                    value: ThemeMode.system,
-                    groupValue: mode,
-                    onChanged: (v) => themeCtrl.setMode(v!),
-                  ),
-                ],
-              );
-            },
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: ValueListenableBuilder<ThemeMode>(
+              valueListenable: themeCtrl,
+              builder: (context, mode, _) {
+                return SegmentedButton<ThemeMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: ThemeMode.dark,
+                      label: Text('Dark'),
+                      icon: Icon(Icons.dark_mode_rounded),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.light,
+                      label: Text('Light'),
+                      icon: Icon(Icons.light_mode_rounded),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.system,
+                      label: Text('System'),
+                      icon: Icon(Icons.settings_suggest_rounded),
+                    ),
+                  ],
+                  selected: {mode},
+                  onSelectionChanged: (newSelection) {
+                    themeCtrl.setMode(newSelection.first);
+                  },
+                );
+              },
+            ),
           ),
           const Divider(),
 

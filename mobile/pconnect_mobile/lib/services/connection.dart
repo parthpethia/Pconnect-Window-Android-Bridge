@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-
+import 'package:crypto/crypto.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../utils/notifications.dart';
@@ -12,6 +13,14 @@ import 'input_channel.dart';
 import 'pc_websocket.dart';
 import 'screen_stream_modes.dart';
 import 'session_crypto.dart';
+
+class _AccumulatorSink<T> implements ChunkedConversionSink<T> {
+  final List<T> events = <T>[];
+  @override
+  void add(T chunk) => events.add(chunk);
+  @override
+  void close() {}
+}
 
 const int kWsPortDefault = 47821;
 const int kDefaultWssPort = 47824;
@@ -60,25 +69,65 @@ class ConnectionStatus {
       screenStreamModes.contains(ScreenStreamModes.webRtcV1);
 }
 
+enum TransferState { queued, active, paused, completed, failed }
+
 class FileTransferProgress {
+  final String id;
   final String filename;
   final int totalBytes;
   int transferredBytes;
   final DateTime startTime;
   final bool isDownload;
+  TransferState state;
+  String? error;
+  String? suffixedFilename;
 
   FileTransferProgress({
+    required this.id,
     required this.filename,
     required this.totalBytes,
     required this.isDownload,
+    this.state = TransferState.active,
+    this.error,
+    this.suffixedFilename,
   })  : transferredBytes = 0,
         startTime = DateTime.now();
 
-  double get progress => totalBytes > 0 ? transferredBytes / totalBytes : 0;
+  double get progress => totalBytes > 0 ? (transferredBytes / totalBytes).clamp(0.0, 1.0) : 0;
   int get elapsedSeconds => DateTime.now().difference(startTime).inSeconds;
-  int get bytesPerSecond => elapsedSeconds > 0 ? transferredBytes ~/ elapsedSeconds : 0;
-  int get etaSeconds => bytesPerSecond > 0 ? (totalBytes - transferredBytes) ~/ bytesPerSecond : 0;
+  
+  double get speedMbPerSec {
+    if (elapsedSeconds <= 0) return 0.0;
+    return (transferredBytes / (1024 * 1024)) / elapsedSeconds;
+  }
+
+  String get speedStr => '${speedMbPerSec.toStringAsFixed(1)} MB/s';
+
+  int get etaSeconds {
+    final bytesPerSec = elapsedSeconds > 0 ? transferredBytes ~/ elapsedSeconds : 0;
+    return bytesPerSec > 0 ? (totalBytes - transferredBytes) ~/ bytesPerSec : 0;
+  }
+
+  String get etaStr {
+    if (etaSeconds <= 0) return '0s';
+    if (etaSeconds < 60) return '${etaSeconds}s';
+    final m = etaSeconds ~/ 60;
+    final s = etaSeconds % 60;
+    return '${m}m ${s}s';
+  }
+
   String get progressStr => '${(progress * 100).toStringAsFixed(1)}%';
+
+  String get semanticsLabel {
+    final directionStr = isDownload ? 'Download' : 'Upload';
+    if (state == TransferState.completed) {
+      return '$directionStr of $filename completed successfully.';
+    } else if (state == TransferState.failed) {
+      return '$directionStr of $filename failed: ${error ?? "Unknown error"}.';
+    } else {
+      return '$directionStr of $filename, $progressStr complete, $speedStr, estimated time remaining $etaStr.';
+    }
+  }
 }
 
 class RemoteFile {
@@ -131,6 +180,7 @@ class PcConnection {
   final ValueNotifier<List<CustomCommand>> commandListNotifier = ValueNotifier([]);
   final ValueNotifier<List<LogEntry>> logEntriesNotifier = ValueNotifier([]);
   final ValueNotifier<Uint8List?> screenFrameNotifier = ValueNotifier(null);
+  late final FrameJitterBuffer _jitterBuffer = FrameJitterBuffer(targetNotifier: screenFrameNotifier);
 
   RTCPeerConnection? _rtcPeer;
   RTCVideoRenderer? _rtcRenderer;
@@ -166,6 +216,14 @@ class PcConnection {
   Completer<Map<String, dynamic>>? _diagCompleter;
   Completer<String?>? _pairCompleter;
   int _screenFrameGen = 0;
+
+  final Map<String, Completer<bool>> _transferStartCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>> _transferResumeCompleters = {};
+  final Map<String, void Function(int chunkIndex)> _transferAckChunkListeners = {};
+  final Map<String, void Function(int received, int total)> _transferProgressListener = {};
+  final Map<String, Completer<Map<String, dynamic>>> _downloadAckCompleters = {};
+  final Map<String, void Function(Uint8List chunkData, int chunkIndex)> _downloadChunkListeners = {};
+  final Map<String, Completer<List<dynamic>>> _dirListCompleters = {};
 
   bool get isCaptureActive => _captureActive;
   int lastCaptureIntervalMs = 1000;
@@ -299,7 +357,7 @@ class PcConnection {
           // Parse height (uint32 big-endian, bytes 5-8)
           // Remaining bytes (9+) are raw JPEG payload
           final jpegBytes = Uint8List.sublistView(bytes, 9);
-          screenFrameNotifier.value = jpegBytes;
+          _jitterBuffer.pushFrame(jpegBytes);
         }
         return;
       }
@@ -375,7 +433,7 @@ class PcConnection {
               final gen = ++_screenFrameGen;
               final decoded = await compute(_decodeScreenFrameBase64, data);
               if (gen == _screenFrameGen && decoded != null) {
-                screenFrameNotifier.value = decoded;
+                _jitterBuffer.pushFrame(decoded);
               }
             }
           } catch (_) {}
@@ -500,7 +558,78 @@ class PcConnection {
 
         case 'webrtcFallback':
           await _fallbackFromWebRtc();
-          _send({'v': 1, 'type': 'screenCaptureStart', 'intervalMs': 800, 'width': 1080, 'quality': 70});
+          _send({
+            'v': 1,
+            'type': 'screenCaptureStart',
+            'intervalMs': lastCaptureIntervalMs,
+            'width': lastCaptureWidth,
+            'quality': lastCaptureQuality,
+          });
+          break;
+
+        case 'fileTransferAck':
+          final ftId = obj['id'] as String?;
+          final ready = obj['ready'] == true;
+          if (ftId != null && _transferStartCompleters.containsKey(ftId)) {
+            _transferStartCompleters[ftId]?.complete(ready);
+          }
+          break;
+
+        case 'fileTransferResumeAck':
+          final ftId = obj['id'] as String?;
+          if (ftId != null && _transferResumeCompleters.containsKey(ftId)) {
+            _transferResumeCompleters[ftId]?.complete(obj);
+          }
+          break;
+
+        case 'fileTransferAckChunk':
+          final ftId = obj['id'] as String?;
+          final chunkIdx = (obj['chunkIndex'] as num?)?.toInt() ?? -1;
+          if (ftId != null && chunkIdx >= 0) {
+            _transferAckChunkListeners[ftId]?.call(chunkIdx);
+          }
+          break;
+
+        case 'fileTransferProgress':
+          final ftId = obj['id'] as String?;
+          final received = (obj['received'] as num?)?.toInt() ?? 0;
+          final total = (obj['total'] as num?)?.toInt() ?? 0;
+          if (ftId != null) {
+            final currentMap = activeTransfersNotifier.value;
+            if (currentMap.containsKey(ftId)) {
+              final p = currentMap[ftId]!;
+              p.transferredBytes = received;
+              activeTransfersNotifier.value = {...currentMap, ftId: p};
+            }
+            _transferProgressListener[ftId]?.call(received, total);
+          }
+          break;
+
+        case 'fileTransferDirList':
+          final key = obj['path'] as String? ?? '__roots__';
+          final items = obj['items'] as List<dynamic>? ?? [];
+          if (_dirListCompleters.containsKey(key)) {
+            _dirListCompleters[key]?.complete(items);
+          }
+          break;
+
+        case 'fileTransferDownloadAck':
+          final dlId = obj['id'] as String?;
+          if (dlId != null && _downloadAckCompleters.containsKey(dlId)) {
+            _downloadAckCompleters[dlId]?.complete(obj);
+          }
+          break;
+
+        case 'fileTransferDownloadChunkData':
+          final dlId = obj['id'] as String?;
+          final chunkIdx = (obj['chunkIndex'] as num?)?.toInt() ?? -1;
+          final b64Data = obj['data'] as String?;
+          if (dlId != null && chunkIdx >= 0 && b64Data != null) {
+            try {
+              final bytes = Uint8List.fromList(base64Decode(b64Data));
+              _downloadChunkListeners[dlId]?.call(bytes, chunkIdx);
+            } catch (_) {}
+          }
           break;
       }
     } catch (e) {
@@ -717,6 +846,7 @@ class PcConnection {
     if (_webrtcActive) {
       _fallbackFromWebRtc(rescheduleRetry: false);
     }
+    _jitterBuffer.clear();
     _send({'v': 1, 'type': 'screenCaptureStop'});
     _screenFrameGen++;
     screenFrameNotifier.value = null;
@@ -882,46 +1012,326 @@ class PcConnection {
     _send({'v': 1, 'type': 'listRecentFiles', 'limit': limit});
   }
 
-  Future<void> uploadFile(String filePath, {required Function(FileTransferProgress) onProgress}) async {
+  static Future<void> _saveMobileTransferState(String id, Map<String, dynamic> state) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pconnect_transfer_$id', jsonEncode(state));
+    } catch (_) {}
+  }
+
+  static Future<void> _removeMobileTransferState(String id) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('pconnect_transfer_$id');
+    } catch (_) {}
+  }
+
+  static Future<List<Map<String, dynamic>>> getSavedMobileTransfers() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys().where((k) => k.startsWith('pconnect_transfer_'));
+      final list = <Map<String, dynamic>>[];
+      for (final k in keys) {
+        final s = prefs.getString(k);
+        if (s != null) {
+          list.add(jsonDecode(s) as Map<String, dynamic>);
+        }
+      }
+      return list;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> discardTransfer(String transferId) async {
+    await _removeMobileTransferState(transferId);
+    final currentMap = Map<String, FileTransferProgress>.from(activeTransfersNotifier.value);
+    currentMap.remove(transferId);
+    activeTransfersNotifier.value = currentMap;
+    if (currentStatus.connected) {
+      _send({'v': 1, 'type': 'fileTransferDiscard', 'id': transferId});
+    }
+  }
+
+  void abortTransfer(String transferId) {
+    _send({'v': 1, 'type': 'fileTransferAbort', 'id': transferId});
+    final currentMap = Map<String, FileTransferProgress>.from(activeTransfersNotifier.value);
+    final item = currentMap[transferId];
+    if (item != null) {
+      item.state = TransferState.failed;
+      item.error = 'Cancelled by user';
+    }
+    activeTransfersNotifier.value = currentMap;
+  }
+
+  Future<void> uploadFile(String filePath, {required Function(FileTransferProgress) onProgress, String? resumeTransferId}) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) return;
       final fileSize = await file.length();
       if (fileSize <= 0) return;
-      // Use Uri to correctly extract filename on both Windows and Unix paths
       final filename = file.uri.pathSegments.last;
-      final transferId = const Uuid().v4();
+      final transferId = resumeTransferId ?? const Uuid().v4();
 
-      final progress = FileTransferProgress(filename: filename, totalBytes: fileSize, isDownload: false);
+      final progress = FileTransferProgress(id: transferId, filename: filename, totalBytes: fileSize, isDownload: false);
       activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
 
-      _send({'v': 1, 'type': 'fileTransferStart', 'id': transferId, 'filename': filename, 'size': fileSize, 'direction': 'upload'});
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // Persist transfer state to mobile local storage (SharedPreferences) to survive app restarts/kills
+      await _saveMobileTransferState(transferId, {
+        'id': transferId,
+        'filePath': filePath,
+        'filename': filename,
+        'fileSize': fileSize,
+        'direction': 'upload',
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      });
 
-      // Stream chunks from disk instead of reading entire file into memory
+      int startChunkIndex = 0;
+      Set<int> alreadyReceivedChunks = {};
+
+      if (resumeTransferId != null) {
+        final resumeCompleter = Completer<Map<String, dynamic>>();
+        _transferResumeCompleters[transferId] = resumeCompleter;
+        _send({
+          'v': 1,
+          'type': 'fileTransferResume',
+          'id': transferId,
+          'filename': filename,
+          'size': fileSize,
+          'protocolVersion': 2,
+        });
+
+        final resObj = await resumeCompleter.future.timeout(const Duration(seconds: 10), onTimeout: () => {});
+        _transferResumeCompleters.remove(transferId);
+
+        if (resObj['ready'] == true) {
+          final hc = (resObj['highestContiguousChunk'] as num?)?.toInt() ?? -1;
+          if (hc >= 0) startChunkIndex = hc + 1;
+          final rec = resObj['receivedChunks'];
+          if (rec is List) {
+            alreadyReceivedChunks = rec.map((e) => (e as num).toInt()).toSet();
+          }
+        }
+      } else {
+        final startCompleter = Completer<bool>();
+        _transferStartCompleters[transferId] = startCompleter;
+        _send({
+          'v': 1,
+          'type': 'fileTransferStart',
+          'id': transferId,
+          'filename': filename,
+          'size': fileSize,
+          'direction': 'upload',
+          'protocolVersion': 2,
+        });
+
+        final ready = await startCompleter.future.timeout(const Duration(seconds: 10), onTimeout: () => false);
+        _transferStartCompleters.remove(transferId);
+        if (!ready) {
+          await _removeMobileTransferState(transferId);
+          final updated = Map<String, FileTransferProgress>.from(activeTransfersNotifier.value);
+          updated.remove(transferId);
+          activeTransfersNotifier.value = updated;
+          return;
+        }
+      }
+
+      // In-flight windowing flow control (max 16 unacknowledged chunks, reduced to 6 if screen streaming is active)
+      // TODO: v1 static tradeoff - window scaling should eventually read the AIMD controller's live bitrate tier instead of a hardcoded 16->6 split
+      int inFlight = 0;
+      final maxInFlight = _captureActive ? 6 : 16;
+      Completer<void>? windowCompleter;
+      bool transferFailed = false;
+
+      // Zero-double-I/O incremental SHA-256 accumulator
+      final outputAccumulator = _AccumulatorSink<Digest>();
+      final shaSink = sha256.startChunkedConversion(outputAccumulator);
+
+      _transferAckChunkListeners[transferId] = (chunkIdx) {
+        if (inFlight > 0) inFlight--;
+        final wc = windowCompleter;
+        if (wc != null && !wc.isCompleted) {
+          wc.complete();
+        }
+      };
+
+      _transferProgressListener[transferId] = (received, total) {
+        progress.transferredBytes = received;
+        onProgress(progress);
+        activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
+      };
+
       const chunkSize = 50 * 1024;
       final totalChunks = (fileSize / chunkSize).ceil();
       final raf = await file.open(mode: FileMode.read);
       try {
         for (int i = 0; i < totalChunks; i++) {
+          if (i < startChunkIndex || alreadyReceivedChunks.contains(i)) {
+            continue; // Skip already received chunks on resume
+          }
+
+          while (inFlight >= maxInFlight && !transferFailed && !_disposed) {
+            final wc = Completer<void>();
+            windowCompleter = wc;
+            try {
+              await wc.future.timeout(const Duration(seconds: 10));
+            } catch (_) {
+              transferFailed = true;
+              break;
+            }
+          }
+          if (transferFailed || _disposed) break;
+
+          await raf.setPosition(i * chunkSize);
           final chunk = await raf.read(chunkSize);
           if (chunk.isEmpty) break;
-          _send({'v': 1, 'type': 'fileTransferChunk', 'id': transferId, 'chunkIndex': i, 'totalChunks': totalChunks, 'data': base64Encode(chunk), 'size': chunk.length});
-          progress.transferredBytes += chunk.length;
-          onProgress(progress);
-          activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
-          await Future<void>.delayed(const Duration(milliseconds: 10));
+
+          // Accumulate SHA-256 hash incrementally as chunk is read for transmission
+          shaSink.add(chunk);
+          inFlight++;
+
+          _send({
+            'v': 1,
+            'type': 'fileTransferChunk',
+            'id': transferId,
+            'chunkIndex': i,
+            'totalChunks': totalChunks,
+            'data': base64Encode(chunk),
+            'size': chunk.length
+          });
+
+          // Inter-chunk pacing when screen capture is active to prevent video frame starvation
+          if (_captureActive) {
+            await Future<void>.delayed(const Duration(milliseconds: 6));
+          }
         }
       } finally {
+        shaSink.close();
+        _transferAckChunkListeners.remove(transferId);
+        _transferProgressListener.remove(transferId);
         await raf.close();
       }
 
-      _send({'v': 1, 'type': 'fileTransferComplete', 'id': transferId});
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      final updated = Map<String, FileTransferProgress>.from(activeTransfersNotifier.value);
-      updated.remove(transferId);
-      activeTransfersNotifier.value = updated;
+      String? computedHash;
+      if (outputAccumulator.events.isNotEmpty) {
+        computedHash = outputAccumulator.events.single.toString();
+      }
+
+      if (!transferFailed && !_disposed) {
+        _send({'v': 1, 'type': 'fileTransferComplete', 'id': transferId, 'sha256': computedHash});
+        progress.state = TransferState.completed;
+        progress.transferredBytes = fileSize;
+        activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
+      } else {
+        progress.state = TransferState.failed;
+        progress.error ??= 'Transfer timed out or connection lost';
+        activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
+      }
+      await _removeMobileTransferState(transferId);
+    } catch (e) {
+      final currentMap = Map<String, FileTransferProgress>.from(activeTransfersNotifier.value);
+      final p = currentMap[resumeTransferId ?? ''];
+      if (p != null) {
+        p.state = TransferState.failed;
+        p.error = e.toString();
+        activeTransfersNotifier.value = currentMap;
+      }
+      await _removeMobileTransferState(resumeTransferId ?? '');
+    }
+  }
+
+  Future<List<dynamic>> listPcDirectory(String? path) async {
+    final c = Completer<List<dynamic>>();
+    final reqKey = path ?? '__roots__';
+    _dirListCompleters[reqKey] = c;
+    _send({'v': 1, 'type': 'fileTransferListDir', 'path': path});
+    try {
+      return await c.future.timeout(const Duration(seconds: 8));
+    } catch (_) {
+      return [];
+    } finally {
+      _dirListCompleters.remove(reqKey);
+    }
+  }
+
+  Future<void> downloadFile(String pcFilePath, String targetDir, {required Function(FileTransferProgress) onProgress}) async {
+    try {
+      final transferId = const Uuid().v4();
+      final ackCompleter = Completer<Map<String, dynamic>>();
+      _downloadAckCompleters[transferId] = ackCompleter;
+
+      _send({'v': 1, 'type': 'fileTransferDownloadStart', 'id': transferId, 'path': pcFilePath, 'protocolVersion': 2});
+
+      final ack = await ackCompleter.future.timeout(const Duration(seconds: 10), onTimeout: () => {});
+      _downloadAckCompleters.remove(transferId);
+
+      if (ack['ready'] != true) return;
+
+      final filename = ack['filename'] as String? ?? 'downloaded_file';
+      final totalSize = (ack['size'] as num?)?.toInt() ?? 0;
+      final expectedSha = ack['sha256'] as String?;
+
+      final progress = FileTransferProgress(id: transferId, filename: filename, totalBytes: totalSize, isDownload: true);
+      activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
+
+      final targetPath = '$targetDir/$filename';
+      final targetFile = File(targetPath);
+      final raf = await targetFile.open(mode: FileMode.write);
+
+      const chunkSize = 50 * 1024;
+      final totalChunks = (totalSize / chunkSize).ceil();
+
+      final chunkCompleter = Completer<void>();
+      int currentChunk = 0;
+
+      _downloadChunkListeners[transferId] = (chunkData, chunkIdx) {
+        if (chunkIdx == currentChunk) {
+          raf.writeFromSync(chunkData);
+          progress.transferredBytes += chunkData.length;
+          onProgress(progress);
+          activeTransfersNotifier.value = {...activeTransfersNotifier.value, transferId: progress};
+          currentChunk++;
+          if (!chunkCompleter.isCompleted && currentChunk >= totalChunks) {
+            chunkCompleter.complete();
+          }
+        }
+      };
+
+      try {
+        for (int i = 0; i < totalChunks; i++) {
+          _send({'v': 1, 'type': 'fileTransferDownloadChunk', 'id': transferId, 'path': pcFilePath, 'chunkIndex': i});
+          await Future<void>.delayed(const Duration(milliseconds: 15));
+        }
+
+        await chunkCompleter.future.timeout(const Duration(seconds: 30));
+      } catch (_) {}
+      finally {
+        _downloadChunkListeners.remove(transferId);
+        await raf.close();
+
+        // Verify SHA-256 integrity
+        if (expectedSha != null && await targetFile.exists()) {
+          final computedSha = await _computeFileSha256(targetFile);
+          if (computedSha != null && computedSha.toLowerCase() != expectedSha.toLowerCase()) {
+            await targetFile.delete();
+          }
+        }
+
+        final updated = Map<String, FileTransferProgress>.from(activeTransfersNotifier.value);
+        updated.remove(transferId);
+        activeTransfersNotifier.value = updated;
+      }
     } catch (_) {}
+  }
+
+  static Future<String?> _computeFileSha256(File file) async {
+    try {
+      final stream = file.openRead();
+      final digest = await sha256.bind(stream).first;
+      return digest.toString();
+    } catch (_) {
+      return null;
+    }
   }
 
   void _send(Map<String, dynamic> obj) {
@@ -1080,5 +1490,62 @@ Uint8List? _decodeScreenFrameBase64(String data) {
     return base64Decode(data);
   } catch (_) {
     return null;
+  }
+}
+
+class FrameJitterBuffer {
+  final ValueNotifier<Uint8List?> targetNotifier;
+  final List<Uint8List> _buffer = [];
+  final List<int> _arrivalIntervalsMs = [];
+  DateTime? _lastArrival;
+  Timer? _pacingTimer;
+
+  FrameJitterBuffer({required this.targetNotifier});
+
+  void pushFrame(Uint8List frame) {
+    final now = DateTime.now();
+    if (_lastArrival != null) {
+      final interval = now.difference(_lastArrival!).inMilliseconds;
+      if (interval > 5 && interval < 2000) {
+        _arrivalIntervalsMs.add(interval);
+        if (_arrivalIntervalsMs.length > 10) {
+          _arrivalIntervalsMs.removeAt(0);
+        }
+      }
+    }
+    _lastArrival = now;
+
+    if (_buffer.length >= 3) {
+      _buffer.removeAt(0);
+    }
+    _buffer.add(frame);
+
+    if (_pacingTimer == null || !_pacingTimer!.isActive) {
+      _scheduleNextFrame();
+    }
+  }
+
+  void _scheduleNextFrame() {
+    if (_buffer.isEmpty) return;
+
+    final frame = _buffer.removeAt(0);
+    targetNotifier.value = frame;
+
+    if (_buffer.isNotEmpty) {
+      int avgDelayMs = 33;
+      if (_arrivalIntervalsMs.isNotEmpty) {
+        final sum = _arrivalIntervalsMs.reduce((a, b) => a + b);
+        avgDelayMs = (sum / _arrivalIntervalsMs.length).round().clamp(16, 200);
+      }
+      _pacingTimer = Timer(Duration(milliseconds: avgDelayMs), _scheduleNextFrame);
+    }
+  }
+
+  void clear() {
+    _pacingTimer?.cancel();
+    _pacingTimer = null;
+    _buffer.clear();
+    _arrivalIntervalsMs.clear();
+    _lastArrival = null;
   }
 }

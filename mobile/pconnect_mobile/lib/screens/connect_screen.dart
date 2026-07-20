@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
 import '../services/connection.dart';
 import 'diagnostics_screen.dart';
 import 'discovery_screen.dart'; // To reuse ProfileStore and DiscoveredPc structures if needed, or we declare them
@@ -207,7 +205,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
               height: 300,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: cs.primary.withOpacity(0.18),
+                color: cs.primary.withValues(alpha: 0.18),
               ),
             ),
           ),
@@ -219,7 +217,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
               height: 250,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: cs.secondary.withOpacity(0.12),
+                color: cs.secondary.withValues(alpha: 0.12),
               ),
             ),
           ),
@@ -232,7 +230,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
               child: Tooltip(
                 message: 'Connection Diagnostics',
                 child: CircleAvatar(
-                  backgroundColor: Colors.white.withOpacity(0.06),
+                  backgroundColor: Colors.white.withValues(alpha: 0.06),
                   foregroundColor: Colors.white70,
                   child: IconButton(
                     icon: const Icon(Icons.network_check_rounded),
@@ -273,7 +271,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
-                                  color: cs.primary.withOpacity(0.3),
+                                  color: cs.primary.withValues(alpha: 0.3),
                                   blurRadius: 20,
                                 ),
                               ],
@@ -298,7 +296,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                           'Make sure Pconnect Agent is running on your computer',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
+                            color: Colors.white.withValues(alpha: 0.5),
                             fontSize: 13,
                           ),
                         ),
@@ -318,7 +316,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                           color: const Color(0xFF1E1B4B),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(20),
-                            side: BorderSide(color: cs.primary.withOpacity(0.4)),
+                            side: BorderSide(color: cs.primary.withValues(alpha: 0.4)),
                           ),
                           child: Padding(
                             padding: const EdgeInsets.all(20),
@@ -342,7 +340,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                                 const SizedBox(height: 6),
                                 Text(
                                   'Type the 6-digit numeric pairing code displayed by Pconnect on your desktop.',
-                                  style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.65)),
+                                  style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.65)),
                                 ),
                                 const SizedBox(height: 16),
                                 Row(
@@ -356,12 +354,12 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                                         decoration: InputDecoration(
                                           counterText: '',
                                           hintText: '000000',
-                                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                                          hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
                                           border: OutlineInputBorder(
                                             borderRadius: BorderRadius.circular(12),
                                           ),
                                           filled: true,
-                                          fillColor: Colors.white.withOpacity(0.04),
+                                          fillColor: Colors.white.withValues(alpha: 0.04),
                                         ),
                                         onSubmitted: (_) => _submitCode(),
                                       ),
@@ -399,9 +397,9 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                               child: Container(
                                 height: 120,
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
+                                  color: Colors.white.withValues(alpha: 0.04),
                                   borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
                                 ),
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -409,7 +407,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                                     Container(
                                       padding: const EdgeInsets.all(12),
                                       decoration: BoxDecoration(
-                                        color: cs.primary.withOpacity(0.12),
+                                        color: cs.primary.withValues(alpha: 0.12),
                                         shape: BoxShape.circle,
                                       ),
                                       child: Icon(Icons.qr_code_scanner_rounded, color: cs.primary, size: 28),
@@ -438,9 +436,9 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                               child: Container(
                                 height: 120,
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
+                                  color: Colors.white.withValues(alpha: 0.04),
                                   borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
                                 ),
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -448,7 +446,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                                     Container(
                                       padding: const EdgeInsets.all(12),
                                       decoration: BoxDecoration(
-                                        color: cs.secondary.withOpacity(0.12),
+                                        color: cs.secondary.withValues(alpha: 0.12),
                                         shape: BoxShape.circle,
                                       ),
                                       child: _scanning
@@ -491,9 +489,9 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.03),
+                          color: Colors.white.withValues(alpha: 0.03),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white.withOpacity(0.08)),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
                         ),
                         child: Column(
                           children: [
@@ -509,7 +507,7 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                                       labelText: 'PC Host / IP Address',
                                       labelStyle: const TextStyle(color: Colors.white38),
                                       hintText: '192.168.1.100',
-                                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.15)),
+                                      hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.15)),
                                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                                       isDense: true,
                                     ),
@@ -562,9 +560,9 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: Colors.red.withOpacity(0.15),
+                            color: Colors.red.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: Colors.red.withOpacity(0.35)),
+                            border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
                           ),
                           child: Row(
                             children: [
@@ -595,19 +593,19 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                         ),
                         const SizedBox(height: 8),
                         ..._discovered.map((pc) => Card(
-                          color: Colors.white.withOpacity(0.04),
+                          color: Colors.white.withValues(alpha: 0.04),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
-                            side: BorderSide(color: Colors.white.withOpacity(0.06)),
+                            side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
                           ),
                           margin: const EdgeInsets.only(bottom: 8),
                           child: ListTile(
                             leading: CircleAvatar(
-                              backgroundColor: cs.primary.withOpacity(0.12),
+                              backgroundColor: cs.primary.withValues(alpha: 0.12),
                               child: Icon(Icons.computer_rounded, color: cs.primary),
                             ),
                             title: Text(pc.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                            subtitle: Text('${pc.address.address}:${pc.wsPort}', style: TextStyle(color: Colors.white.withOpacity(0.4))),
+                            subtitle: Text('${pc.address.address}:${pc.wsPort}', style: TextStyle(color: Colors.white.withValues(alpha: 0.4))),
                             trailing: FilledButton.tonal(
                               onPressed: () => _connectTo(pc.address.address, pc.wsPort, wssPort: pc.wssPort),
                               style: FilledButton.styleFrom(
@@ -633,19 +631,19 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                         ),
                         const SizedBox(height: 8),
                         ..._profiles.map((p) => Card(
-                          color: Colors.white.withOpacity(0.03),
+                          color: Colors.white.withValues(alpha: 0.03),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
-                            side: BorderSide(color: Colors.white.withOpacity(0.05)),
+                            side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
                           ),
                           margin: const EdgeInsets.only(bottom: 8),
                           child: ListTile(
                             leading: CircleAvatar(
-                              backgroundColor: cs.secondary.withOpacity(0.12),
+                              backgroundColor: cs.secondary.withValues(alpha: 0.12),
                               child: Icon(Icons.bookmark_rounded, color: cs.secondary),
                             ),
                             title: Text(p.name.isEmpty ? p.ip : p.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                            subtitle: Text('${p.ip}:${p.port}', style: TextStyle(color: Colors.white.withOpacity(0.4))),
+                            subtitle: Text('${p.ip}:${p.port}', style: TextStyle(color: Colors.white.withValues(alpha: 0.4))),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -681,13 +679,13 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
           if (_connecting)
             Positioned.fill(
               child: Container(
-                color: Colors.black.withOpacity(0.6),
+                color: Colors.black.withValues(alpha: 0.6),
                 child: Center(
                   child: Card(
                     color: const Color(0xFF1E293B),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
-                      side: BorderSide(color: Colors.white.withOpacity(0.1)),
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
                     ),
                     elevation: 12,
                     child: Padding(
@@ -763,7 +761,7 @@ class _MiniLogoPainter extends CustomPainter {
     canvas.drawCircle(center, radius, paintBg);
 
     final border = Paint()
-      ..color = Colors.white.withOpacity(0.2)
+      ..color = Colors.white.withValues(alpha: 0.2)
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
     canvas.drawCircle(center, radius - 3, border);
@@ -896,7 +894,7 @@ class _ModernQrScanPageState extends State<_ModernQrScanPage> {
                         const SizedBox(height: 8),
                         Text(
                           'Please enable camera permissions in application settings to scan PC QR Codes.',
-                          style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 24),
@@ -926,7 +924,7 @@ class _ModernQrScanPageState extends State<_ModernQrScanPage> {
                             const SizedBox(height: 8),
                             Text(
                               'Pconnect needs camera access to read connection QR codes.',
-                              style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 24),
@@ -969,7 +967,7 @@ class _ModernQrScanPageState extends State<_ModernQrScanPage> {
                                 child: Text(
                                   'Aim camera at the QR code displayed on the PC Agent popup window',
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12),
+                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12),
                                 ),
                               ),
                             ),

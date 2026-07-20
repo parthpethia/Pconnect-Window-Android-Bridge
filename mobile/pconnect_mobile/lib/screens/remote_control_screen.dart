@@ -491,8 +491,11 @@ class _EmbeddedTrackpadState extends State<_EmbeddedTrackpad> {
   }
 
   Offset _centroid() {
+    if (_pointers.isEmpty) return Offset.zero;
     var sum = Offset.zero;
-    for (final p in _pointers.values) sum += p;
+    for (final p in _pointers.values) {
+      sum += p;
+    }
     return sum / _pointers.length.toDouble();
   }
 

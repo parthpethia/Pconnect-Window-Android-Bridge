@@ -34,3 +34,8 @@ replay_pid*.log
 *.log
 desktop/Pconnect.Agent/agent_error.log
 desktop/Pconnect.Agent/agent_output.log
+
+# Build artifacts & releases
+releases/
+webpage/public/releases/
+.tmp/

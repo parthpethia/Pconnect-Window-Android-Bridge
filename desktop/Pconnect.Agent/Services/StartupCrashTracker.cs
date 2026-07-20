@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace Pconnect.Agent.Services;
 
@@ -31,6 +32,9 @@ internal static class StartupCrashTracker
         {
             // ignore
         }
+
+        // Reset the dirty status and streak after the app runs successfully for 15 seconds
+        _ = Task.Delay(TimeSpan.FromSeconds(15)).ContinueWith(_ => MarkCleanExit(), TaskScheduler.Default);
 
         return streak;
     }

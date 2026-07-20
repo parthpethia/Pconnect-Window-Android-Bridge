@@ -32,25 +32,25 @@ internal static class MediaKeyService
         byte vk;
         switch (key.Trim().ToLowerInvariant())
         {
-            case "play_pause":
+            case "play_pause" or "play" or "pause" or "playpause":
                 vk = VK_MEDIA_PLAY_PAUSE;
                 break;
-            case "next":
+            case "next" or "next_track" or "nexttrack":
                 vk = VK_MEDIA_NEXT_TRACK;
                 break;
-            case "prev":
+            case "prev" or "previous" or "prev_track" or "prevtrack":
                 vk = VK_MEDIA_PREV_TRACK;
                 break;
             case "stop":
                 vk = VK_MEDIA_STOP;
                 break;
-            case "mute":
+            case "mute" or "vol_mute" or "volume_mute" or "volumemute":
                 vk = VK_VOLUME_MUTE;
                 break;
-            case "vol_up":
+            case "vol_up" or "volume_up" or "volup" or "volumeup" or "vol+":
                 vk = VK_VOLUME_UP;
                 break;
-            case "vol_down":
+            case "vol_down" or "volume_down" or "voldown" or "volumedown" or "vol-":
                 vk = VK_VOLUME_DOWN;
                 break;
             default:

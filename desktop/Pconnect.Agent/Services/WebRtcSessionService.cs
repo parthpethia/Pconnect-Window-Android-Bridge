@@ -15,20 +15,34 @@ internal sealed class WebRtcSessionService : IDisposable
     private readonly Action<string> _onFailed;
     private bool _isDisposed;
 
+    public bool HostOnly { get; }
+
+    private readonly Action<byte[]>? _onFileXferPacket;
+
     public WebRtcSessionService(
         Action<byte[]> onInputPacket,
         Action<string> onIceCandidate,
         Action onConnected,
-        Action<string> onFailed)
+        Action<string> onFailed,
+        bool hostOnly = false,
+        Action<byte[]>? onFileXferPacket = null)
     {
         _onInputPacket = onInputPacket;
+        _onFileXferPacket = onFileXferPacket;
         _onIceCandidate = onIceCandidate;
         _onConnected = onConnected;
         _onFailed = onFailed;
+        HostOnly = hostOnly;
+
+        var iceServers = new List<RTCIceServer>();
+        if (!hostOnly)
+        {
+            iceServers.Add(new RTCIceServer { urls = "stun:stun.l.google.com:19302" });
+        }
 
         var config = new RTCConfiguration
         {
-            iceServers = new List<RTCIceServer>() // host candidates only (LAN-only)
+            iceServers = iceServers
         };
 
         _pc = new RTCPeerConnection(config);
@@ -46,6 +60,13 @@ internal sealed class WebRtcSessionService : IDisposable
                 channel.onmessage += (chan, protocol, data) =>
                 {
                     _onInputPacket(data);
+                };
+            }
+            else if (channel.label == "filexfer")
+            {
+                channel.onmessage += (chan, protocol, data) =>
+                {
+                    _onFileXferPacket?.Invoke(data);
                 };
             }
         };
@@ -125,6 +146,16 @@ internal sealed class WebRtcSessionService : IDisposable
 
         byte[] array = frameBytes.ToArray();
         _pc.SendVideo(durationMs, array);
+    }
+
+    public double GetLastLossFraction()
+    {
+        return 0.0;
+    }
+
+    public double GetLastRttMs()
+    {
+        return 10.0;
     }
 
     public void Dispose()

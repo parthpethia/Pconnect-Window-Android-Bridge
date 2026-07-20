@@ -1,0 +1,76 @@
+/* ═══════════════════════════════════════════════════════════════
+   PCONNECT — Global Stylesheet
+   Theme: Deep dark with purple accents matching Flutter app #6C5CE7
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --bg-primary:    #0A0A0F;
+  --bg-secondary:  #101017;
+  --bg-card:       #111120;
+  --bg-card-hover: #1A1A2E;
+  --bg-surface:    #16162A;
+
+  --text-primary:  #F5F0E8;
+  --text-secondary: rgba(245, 240, 232, 0.55);
+  --text-muted:    rgba(245, 240, 232, 0.30);
+
+  --accent:        #6C5CE7;
+  --accent-light:  #8B7CF7;
+  --accent-glow:   rgba(108, 92, 231, 0.35);
+  --accent-deep:   #8E2DE2;
+
+  --border-subtle: rgba(245, 240, 232, 0.07);
+  --border-hover:  rgba(245, 240, 232, 0.14);
+
+  --font-serif:  'Playfair Display', Georgia, serif;
+  --font-sans:   'Inter', -apple-system, sans-serif;
+  --font-display: 'Outfit', 'Inter', sans-serif;
+
+  --max-width: 1200px;
+}
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(108, 92, 231, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(108, 92, 231, 0.5);
+}

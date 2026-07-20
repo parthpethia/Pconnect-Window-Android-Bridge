@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -13,7 +12,6 @@ import 'screens/control_screen.dart';
 import 'screens/remote_control_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/logs_screen.dart';
-import 'screens/discovery_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/connect_screen.dart';
 
@@ -205,6 +203,8 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
   }
 
   void _disconnect() {
+    _statusSub?.cancel();
+    _statusSub = null;
     _conn?.dispose();
     setState(() {
       _conn = null;

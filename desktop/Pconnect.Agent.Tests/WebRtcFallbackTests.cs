@@ -13,6 +13,7 @@ using System.Runtime.InteropServices;
 
 namespace Pconnect.Agent.Tests;
 
+[Collection("StaticStateTests")]
 public sealed class WebRtcFallbackTests
 {
     [Fact]
@@ -99,7 +100,7 @@ public sealed class WebRtcFallbackTests
             {
                 v = 1,
                 type = "webrtcOffer",
-                sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\nc=IN IP4 127.0.0.1\r\na=setup:actpass\r\na=mid:0\r\na=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\na=rtpmap:102 H264/90000"
+                sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\nc=IN IP4 127.0.0.1\r\na=setup:actpass\r\na=mid:0\r\na=ice-ufrag:testufrag\r\na=ice-pwd:testpassword1234567890\r\na=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\na=rtpmap:102 H264/90000\r\n"
             }));
 
             var connectionTask = handler.HandleConnectionAsync(socket, System.Net.IPAddress.Loopback, cts.Token);
@@ -170,7 +171,7 @@ public sealed class WebRtcFallbackTests
             {
                 v = 1,
                 type = "webrtcOffer",
-                sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\nc=IN IP4 127.0.0.1\r\na=setup:actpass\r\na=mid:0\r\na=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\na=rtpmap:102 H264/90000"
+                sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\nc=IN IP4 127.0.0.1\r\na=setup:actpass\r\na=mid:0\r\na=ice-ufrag:testufrag\r\na=ice-pwd:testpassword1234567890\r\na=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\na=rtpmap:102 H264/90000\r\n"
             }));
 
             var connectionTask = handler.HandleConnectionAsync(socket, System.Net.IPAddress.Loopback, cts.Token);

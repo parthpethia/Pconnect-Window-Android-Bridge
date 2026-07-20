@@ -42,6 +42,7 @@ internal static class Program
 
         try
         {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             ApplicationConfiguration.Initialize();
             Application.Run(new TrayAppContext(abnormalExitStreak));
         }

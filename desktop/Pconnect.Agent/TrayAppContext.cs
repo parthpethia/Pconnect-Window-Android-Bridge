@@ -8,6 +8,7 @@ internal sealed class TrayAppContext : ApplicationContext
     private readonly AgentRuntime _runtime;
     private PairingForm? _pairingForm;
     private DashboardForm? _dashboardForm;
+    private DownloadBrowserForm? _browserForm;
     private readonly SynchronizationContext _uiContext;
     private readonly CancellationTokenSource _ipcCts = new();
     private readonly Task _ipcTask;
@@ -21,12 +22,17 @@ internal sealed class TrayAppContext : ApplicationContext
         // Allow subsequent EXE launches to bring the dashboard back.
         _ipcTask = SingleInstanceIpc.RunServerAsync(() => PostToUi(ShowDashboard), _ipcCts.Token);
 
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip
+        {
+            Renderer = new Pconnect.Agent.UI.DarkToolStripRenderer(),
+        };
         var dashboardItem = new ToolStripMenuItem("Dashboard", null, (_, _) => ShowDashboard());
+        var browseFilesItem = new ToolStripMenuItem("Browse Shared Files", null, (_, _) => ShowDownloadBrowser());
         var showPairItem = new ToolStripMenuItem("Show pairing code", null, (_, _) => ShowPairingCode());
         var copyWsItem = new ToolStripMenuItem("Copy WebSocket URL", null, (_, _) => CopyWebSocketUrl());
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => Exit());
         menu.Items.Add(dashboardItem);
+        menu.Items.Add(browseFilesItem);
         menu.Items.Add(showPairItem);
         menu.Items.Add(copyWsItem);
         menu.Items.Add(new ToolStripSeparator());
@@ -40,6 +46,8 @@ internal sealed class TrayAppContext : ApplicationContext
             ContextMenuStrip = menu,
         };
         _tray.DoubleClick += (_, _) => ShowDashboard();
+
+        ToastNotificationHelper.Initialize(_tray);
 
         if (!_runtime.IsDiscoveryEnabled && !string.IsNullOrWhiteSpace(_runtime.DiscoveryStartError))
         {
@@ -55,8 +63,8 @@ internal sealed class TrayAppContext : ApplicationContext
             }
         }
 
-        // Agent starts silently in the tray. Dashboard is accessible via tray icon
-        // double-click, context menu, or second-launch IPC.
+        // Show Dashboard automatically when launched
+        ShowDashboard();
     }
 
     private void ShowDashboard()
@@ -94,6 +102,23 @@ internal sealed class TrayAppContext : ApplicationContext
 
         _pairingForm.BringToFront();
         _pairingForm.Activate();
+    }
+
+    private void ShowDownloadBrowser()
+    {
+        if (_browserForm is null || _browserForm.IsDisposed)
+        {
+            _browserForm = new DownloadBrowserForm();
+            _browserForm.FormClosed += (_, _) => _browserForm = null;
+            _browserForm.Show();
+        }
+        else
+        {
+            _browserForm.Show();
+        }
+
+        _browserForm.BringToFront();
+        _browserForm.Activate();
     }
 
     private void CopyWebSocketUrl()

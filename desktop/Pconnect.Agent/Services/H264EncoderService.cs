@@ -37,6 +37,8 @@ internal sealed class H264EncoderService : IDisposable
     private uint _gdiHeight = 0;
 
     public bool UseGpuPath => _useGpuPath;
+    public string EncoderName => _encoderName;
+    public bool IsHardware => _isHardware;
     internal static bool ForceInitializeSuccess { get; set; }
 
     [DllImport("mfplat.dll", ExactSpelling = true)]
@@ -73,6 +75,9 @@ internal sealed class H264EncoderService : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int ReleaseDCDelegate(IntPtr thisPtr, IntPtr dirtyRect);
 
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern int GetSystemMetrics(int nIndex);
+
     [DllImport("mfplat.dll", ExactSpelling = true)]
     private static extern int MFTEnumEx(
         ref Guid guidCategory,
@@ -97,6 +102,62 @@ internal sealed class H264EncoderService : IDisposable
     private static readonly Guid MFVideoFormat_H264 = new("34363248-0000-0010-8000-00aa00389b71");
     private static readonly Guid MFVideoFormat_NV12 = new("3231564e-0000-0010-8000-00aa00389b71");
     private static readonly Guid MFVideoFormat_ARGB32 = new("00000015-0000-0010-8000-00aa00389b71");
+
+    [ComImport]
+    [Guid("98666368-662f-4ea6-961b-f5e4e409134e")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ICodecAPI
+    {
+        [PreserveSig] int IsSupported(in Guid api);
+        [PreserveSig] int IsModifiable(in Guid api);
+        [PreserveSig] int GetParameterRange(in Guid api, out object pMin, out object pMax, out object pSteppingDelta);
+        [PreserveSig] int GetParameterValues(in Guid api, out IntPtr ppValues, out uint pCount);
+        [PreserveSig] int GetValue(in Guid api, out object pValue);
+        [PreserveSig] int SetValue(in Guid api, in object pValue);
+    }
+
+    public int CurrentBitrateKbps => _bitrateKbps;
+
+    public bool UpdateBitrate(int targetBitrateKbps)
+    {
+        _bitrateKbps = targetBitrateKbps;
+        if (ForceInitializeSuccess) return true;
+
+        if (_mft != null)
+        {
+            try
+            {
+                IntPtr pUnknown = _mft.NativePointer;
+                Guid iidCodecApi = new Guid("98666368-662f-4ea6-961b-f5e4e409134e");
+                int hr = Marshal.QueryInterface(pUnknown, ref iidCodecApi, out IntPtr pCodecApi);
+                if (hr == 0 && pCodecApi != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var codecApi = (ICodecAPI)Marshal.GetObjectForIUnknown(pCodecApi);
+                        Guid apiMeanBitRate = new Guid("1e8fe37f-6226-434b-af2d-2090d8a57111"); // CODECAPI_AVEncCommonMeanBitRate
+                        uint bps = (uint)(targetBitrateKbps * 1000);
+                        object val = bps;
+                        int res = codecApi.SetValue(apiMeanBitRate, val);
+                        if (res == 0)
+                        {
+                            Console.WriteLine($"[H264Encoder] Dynamic bitrate update succeeded: {targetBitrateKbps} Kbps via ICodecAPI.");
+                            return true;
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.Release(pCodecApi);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[H264Encoder] Dynamic bitrate update exception: {ex.Message}");
+            }
+        }
+        return false;
+    }
 
     public H264EncoderService()
     {
@@ -461,6 +522,13 @@ internal sealed class H264EncoderService : IDisposable
         return Marshal.ReadIntPtr(vtable, index * IntPtr.Size);
     }
 
+    private bool _pendingKeyframe;
+
+    public void RequestKeyframe()
+    {
+        _pendingKeyframe = true;
+    }
+
     private void SetupMft(IMFTransform mft, int width, int height, int fps, int bitrateKbps)
     {
         IMFMediaType outputType = MediaFactory.MFCreateMediaType();
@@ -486,6 +554,29 @@ internal sealed class H264EncoderService : IDisposable
         inputType.Set(MF_MT_INTERLACE_MODE, (uint)2); // Progressive
 
         mft.SetInputType(0, inputType, 0);
+
+        // Configure long GOP (90 frames ~ 3 seconds at 30 FPS)
+        try
+        {
+            IntPtr pUnknown = mft.NativePointer;
+            Guid iidCodecApi = new Guid("98666368-662f-4ea6-961b-f5e4e409134e");
+            int hr = Marshal.QueryInterface(pUnknown, ref iidCodecApi, out IntPtr pCodecApi);
+            if (hr == 0 && pCodecApi != IntPtr.Zero)
+            {
+                try
+                {
+                    var codecApi = (ICodecAPI)Marshal.GetObjectForIUnknown(pCodecApi);
+                    Guid apiGopSize = new Guid("553b08e0-081e-469a-9e1d-c8ef4c148f22"); // CODECAPI_AVEncVideoGOPSize
+                    object val = (uint)90;
+                    codecApi.SetValue(apiGopSize, val);
+                }
+                finally
+                {
+                    Marshal.Release(pCodecApi);
+                }
+            }
+        }
+        catch { /* best-effort GOP size hint */ }
     }
 
     public ReadOnlyMemory<byte> Encode(byte[] bgraPixels, int width, int height, bool forceKeyframe)
@@ -508,8 +599,10 @@ internal sealed class H264EncoderService : IDisposable
         {
             _frameCount++;
 
-            if (forceKeyframe || _frameCount == 1)
+            bool shouldKeyframe = forceKeyframe || _pendingKeyframe || _frameCount == 1 || (_frameCount % 90 == 0);
+            if (shouldKeyframe)
             {
+                _pendingKeyframe = false;
                 _mft.ProcessMessage(TMessageType.MessageCommandFlush, UIntPtr.Zero);
             }
 
@@ -648,8 +741,10 @@ internal sealed class H264EncoderService : IDisposable
         {
             _frameCount++;
 
-            if (forceKeyframe || _frameCount == 1)
+            bool shouldKeyframe = forceKeyframe || _pendingKeyframe || _frameCount == 1 || (_frameCount % 90 == 0);
+            if (shouldKeyframe)
             {
+                _pendingKeyframe = false;
                 _mft.ProcessMessage(TMessageType.MessageCommandFlush, UIntPtr.Zero);
             }
 
@@ -700,9 +795,14 @@ internal sealed class H264EncoderService : IDisposable
                             {
                                 using (var g = System.Drawing.Graphics.FromHdc(hdc))
                                 {
-                                    var screenBounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds 
-                                        ?? new System.Drawing.Rectangle(0, 0, (int)_gdiWidth, (int)_gdiHeight);
-                                    ScreenCaptureService.DrawCursorOnto(g, screenBounds, 1.0, 1.0);
+                                    int physWidth = GetSystemMetrics(0); // SM_CXSCREEN (unscaled physical pixels)
+                                    int physHeight = GetSystemMetrics(1); // SM_CYSCREEN (unscaled physical pixels)
+                                    var screenBounds = (physWidth > 0 && physHeight > 0)
+                                        ? new System.Drawing.Rectangle(0, 0, physWidth, physHeight)
+                                        : (System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, (int)_gdiWidth, (int)_gdiHeight));
+                                    double scaleX = (double)_gdiWidth / screenBounds.Width;
+                                    double scaleY = (double)_gdiHeight / screenBounds.Height;
+                                    ScreenCaptureService.DrawCursorOnto(g, screenBounds, scaleX, scaleY);
                                 }
                             }
                             finally

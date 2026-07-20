@@ -1,6 +1,8 @@
 using System.Drawing;
 using System.Text.Json;
+using System.Windows.Forms;
 using Pconnect.Agent.Services;
+using Pconnect.Agent.UI;
 using QRCoder;
 
 namespace Pconnect.Agent;
@@ -18,64 +20,65 @@ internal sealed class PairingForm : Form
         _runtime = runtime;
 
         Text = "Pconnect Pairing";
-        Width = 420;
-        Height = 380;
+        Width = 460;
+        Height = 440;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
+        BackColor = ThemeColors.Background;
+        ForeColor = ThemeColors.TextPrimary;
 
-        var title = new Label
+        var card = new ModernCard
         {
-            Text = "Enter this code on your phone:",
-            AutoSize = true,
-            Left = 18,
-            Top = 18,
+            Top = 15,
+            Left = 15,
+            Width = 415,
+            Height = 370,
+            Title = "Pair Mobile Device",
+            Subtitle = "Enter this PIN code or scan the QR code on your phone.",
         };
 
         _codeLabel = new Label
         {
             Text = code,
             AutoSize = true,
-            Font = new Font(FontFamily.GenericSansSerif, 28, FontStyle.Bold),
-            Left = 18,
-            Top = 45,
+            Font = new Font("Segoe UI", 28, FontStyle.Bold),
+            ForeColor = ThemeColors.Primary,
+            Left = 20,
+            Top = 50,
         };
 
         _urlLabel = new Label
         {
             Text = FormatUrlHint(runtime),
             AutoSize = true,
-            Left = 18,
+            Font = ThemeColors.SmallFont,
+            ForeColor = ThemeColors.TextSecondary,
+            Left = 20,
             Top = 115,
-            MaximumSize = new Size(380, 0),
-        };
-
-        var qrLabel = new Label
-        {
-            Text = "Or scan this QR code:",
-            AutoSize = true,
-            Left = 18,
-            Top = 140,
+            MaximumSize = new Size(375, 0),
         };
 
         _qrPictureBox = new PictureBox
         {
-            Left = 18,
-            Top = 160,
-            Width = 160,
-            Height = 160,
+            Left = 20,
+            Top = 165,
+            Width = 170,
+            Height = 170,
             SizeMode = PictureBoxSizeMode.Zoom,
-            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.White,
         };
         UpdateQrCode(code);
 
-        var copyButton = new Button
+        var copyButton = new ModernButton
         {
-            Text = "Copy URL",
-            Left = 200,
-            Top = 160,
-            Width = 90,
+            Text = "Copy WebSocket URL",
+            Style = ModernButtonStyle.Primary,
+            Left = 210,
+            Top = 165,
+            Width = 185,
+            Height = 36,
         };
         copyButton.Click += (_, _) =>
         {
@@ -83,22 +86,39 @@ internal sealed class PairingForm : Form
             if (url is not null) Clipboard.SetText(url);
         };
 
-        var closeButton = new Button
+        var copyPinButton = new ModernButton
+        {
+            Text = "Copy PIN",
+            Style = ModernButtonStyle.Secondary,
+            Left = 210,
+            Top = 215,
+            Width = 185,
+            Height = 36,
+        };
+        copyPinButton.Click += (_, _) =>
+        {
+            Clipboard.SetText(_codeLabel.Text);
+        };
+
+        var closeButton = new ModernButton
         {
             Text = "Close",
-            Left = 200,
-            Top = 200,
-            Width = 90,
+            Style = ModernButtonStyle.Outline,
+            Left = 210,
+            Top = 265,
+            Width = 185,
+            Height = 36,
         };
         closeButton.Click += (_, _) => Close();
 
-        Controls.Add(title);
-        Controls.Add(_codeLabel);
-        Controls.Add(_urlLabel);
-        Controls.Add(qrLabel);
-        Controls.Add(_qrPictureBox);
-        Controls.Add(copyButton);
-        Controls.Add(closeButton);
+        card.Controls.Add(_codeLabel);
+        card.Controls.Add(_urlLabel);
+        card.Controls.Add(_qrPictureBox);
+        card.Controls.Add(copyButton);
+        card.Controls.Add(copyPinButton);
+        card.Controls.Add(closeButton);
+
+        Controls.Add(card);
 
         _timer = new System.Windows.Forms.Timer { Interval = 1000 };
         _timer.Tick += (_, _) => RefreshCode();
@@ -141,13 +161,10 @@ internal sealed class PairingForm : Form
             }
 
             var uri = new Uri(url);
-            var ip = uri.Host;
-            var port = uri.Port;
-
             var qrData = JsonSerializer.Serialize(new
             {
-                ip,
-                port,
+                ip = uri.Host,
+                port = uri.Port,
                 wssPort = AgentRuntime.DefaultWssPort,
                 pairingCode = code,
             });
@@ -164,13 +181,12 @@ internal sealed class PairingForm : Form
         }
         catch
         {
-            // QR generation failed — leave blank
+            // QR fallback
         }
     }
 
     private void RefreshCode()
     {
-        // Keep the displayed code in sync with the runtime's rotating code.
         var current = _runtime.Pairing.CurrentCode;
         if (!string.Equals(_codeLabel.Text, current, StringComparison.Ordinal))
         {

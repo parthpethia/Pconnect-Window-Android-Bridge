@@ -10,6 +10,11 @@ internal static class ScreenStreamNegotiation
     public const string JpegBinV1 = "jpeg-bin-v1";
     public const string WebRtcV1 = "webrtc-v1";
 
+    public const int MinBitrateFloorKbps = 800;
+    public const int NormalBitrateCeilingKbps = 3000;
+    public const int HighBitrateCeilingKbps = 5500;
+    public const int BestBitrateCeilingKbps = 9000;
+
     public static IReadOnlyList<string> AgentSupportedModes(SafeStartupOptions safe)
     {
         if (safe.IsSafeMode || safe.DisableScreenCapture)

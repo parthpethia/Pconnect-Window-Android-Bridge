@@ -27,6 +27,8 @@ internal sealed class AgentRuntime : IDisposable
 
     public PairingService Pairing { get; }
     public PairedDevicesStore PairedDevices { get; }
+    public PcActions Pc => _pc;
+    public AuditLogService AuditLog => _ws.AuditLog;
 
     private readonly PcActions _pc;
     private readonly WebSocketHandler _ws;
@@ -82,6 +84,7 @@ internal sealed class AgentRuntime : IDisposable
         _ws = new WebSocketHandler(Pairing, PairedDevices, _pc, _ui, OnDeviceAuthed, OnDeviceDisconnected,
             () => (IsServerRunning, IsDiscoveryEnabled));
         _discovery = new DiscoveryResponder(DefaultDiscoveryPort, DefaultWsPort, DefaultWssPort);
+        NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
     }
 
     public void Start()
@@ -414,8 +417,26 @@ internal sealed class AgentRuntime : IDisposable
         }
     }
 
+    private void OnNetworkAddressChanged(object? sender, EventArgs e)
+    {
+        Task.Run(async () =>
+        {
+            await Task.Delay(1500);
+            lock (_stateGate)
+            {
+                if (!_isServerRunning)
+                {
+                    return;
+                }
+            }
+            StopServer();
+            StartServer();
+        });
+    }
+
     public void Dispose()
     {
+        NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
         StopServer();
         _discovery.Dispose();
         Pairing.Dispose();

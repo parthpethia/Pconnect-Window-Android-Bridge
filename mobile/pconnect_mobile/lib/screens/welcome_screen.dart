@@ -104,8 +104,8 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                 return CustomPaint(
                   painter: _NodeMeshPainter(
                     animationProgress: _animController.value,
-                    primaryColor: cs.primary.withOpacity(0.12),
-                    secondaryColor: cs.secondary.withOpacity(0.12),
+                    primaryColor: cs.primary.withValues(alpha: 0.12),
+                    secondaryColor: cs.secondary.withValues(alpha: 0.12),
                   ),
                 );
               },
@@ -131,7 +131,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: cs.primary.withOpacity(0.4),
+                              color: cs.primary.withValues(alpha: 0.4),
                               blurRadius: 36,
                               spreadRadius: 4,
                             ),
@@ -180,7 +180,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                       fontSize: 15,
                       fontWeight: FontWeight.w400,
                       letterSpacing: 0.5,
-                      color: Colors.white.withOpacity(0.7),
+                      color: Colors.white.withValues(alpha: 0.7),
                     ),
                   ),
 
@@ -208,10 +208,10 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         key: ValueKey<int>(_currentFeatureIndex),
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.06),
+                          color: Colors.white.withValues(alpha: 0.06),
                           borderRadius: BorderRadius.circular(24),
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.12),
+                            color: Colors.white.withValues(alpha: 0.12),
                           ),
                         ),
                         child: Row(
@@ -220,7 +220,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: cs.primaryContainer.withOpacity(0.3),
+                                color: cs.primaryContainer.withValues(alpha: 0.3),
                                 shape: BoxShape.circle,
                               ),
                               child: Icon(
@@ -248,7 +248,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                                   Text(
                                     _features[_currentFeatureIndex]['desc'] as String,
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.65),
+                                      color: Colors.white.withValues(alpha: 0.65),
                                       fontSize: 13,
                                       height: 1.45,
                                     ),
@@ -307,7 +307,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: cs.primary.withOpacity(0.4),
+                          color: cs.primary.withValues(alpha: 0.4),
                           blurRadius: 18,
                           offset: const Offset(0, 6),
                         ),
@@ -370,9 +370,9 @@ class _PconnectLogoPainter extends CustomPainter {
     final basePaint = Paint()
       ..shader = RadialGradient(
         colors: [
-          accentColor.withOpacity(0.9),
-          glowColor.withOpacity(0.7),
-          const Color(0xFF2E0854).withOpacity(0.9),
+          accentColor.withValues(alpha: 0.9),
+          glowColor.withValues(alpha: 0.7),
+          const Color(0xFF2E0854).withValues(alpha: 0.9),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: outerRadius))
       ..style = PaintingStyle.fill;
@@ -381,20 +381,20 @@ class _PconnectLogoPainter extends CustomPainter {
 
     // Glowing border rings
     final borderPaint = Paint()
-      ..color = Colors.white.withOpacity(0.2)
+      ..color = Colors.white.withValues(alpha: 0.2)
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
     canvas.drawCircle(center, outerRadius - 3, borderPaint);
 
     final pulsePaint = Paint()
-      ..color = Colors.white.withOpacity(0.4)
+      ..color = Colors.white.withValues(alpha: 0.4)
       ..strokeWidth = 2.0
       ..style = PaintingStyle.stroke;
     canvas.drawCircle(center, outerRadius - 12, pulsePaint);
 
     // Stylized interconnected network visual
     final linePaint = Paint()
-      ..color = Colors.white.withOpacity(0.4)
+      ..color = Colors.white.withValues(alpha: 0.4)
       ..strokeWidth = 1.0;
 
     // Center Connection Hub Node
@@ -493,7 +493,7 @@ class _NodeMeshPainter extends CustomPainter {
         if (dist < width * 0.6) {
           final opacity = (1.0 - (dist / (width * 0.6))).clamp(0.0, 1.0);
           paintLine.color = Color.lerp(primaryColor, secondaryColor, (i + j) / (points.length * 2))!
-              .withOpacity(opacity * 0.3);
+              .withValues(alpha: opacity * 0.3);
           canvas.drawLine(points[i], points[j], paintLine);
         }
       }
@@ -501,10 +501,10 @@ class _NodeMeshPainter extends CustomPainter {
 
     // Draw glowing nodes
     for (int i = 0; i < points.length; i++) {
-      paintNode.color = (i % 2 == 0 ? primaryColor : secondaryColor).withOpacity(0.55);
+      paintNode.color = (i % 2 == 0 ? primaryColor : secondaryColor).withValues(alpha: 0.55);
       canvas.drawCircle(points[i], 5.0 + (i % 3), paintNode);
       canvas.drawCircle(points[i], 12.0 + (i % 3) * 3, Paint()
-        ..color = paintNode.color.withOpacity(0.15)
+        ..color = paintNode.color.withValues(alpha: 0.15)
         ..style = PaintingStyle.fill);
     }
   }

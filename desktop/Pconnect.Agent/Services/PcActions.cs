@@ -228,6 +228,72 @@ internal sealed class PcActions
         }
     }
 
+    [DllImport("powrprof.dll", SetLastError = true)]
+    private static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent);
+
+    public bool Sleep()
+    {
+        try
+        {
+            return SetSuspendState(false, false, false);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public bool Restart()
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo
+            {
+                FileName = "shutdown.exe",
+                Arguments = "/r /t 0",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+
+            return p is not null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public void TaskView()
+    {
+        KeyComboService.Execute(new[] { "Win", "Tab" });
+    }
+
+    public void ShowDesktop()
+    {
+        KeyComboService.Execute(new[] { "Win", "D" });
+    }
+
+    public void OpenTaskManager()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "taskmgr.exe",
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    public bool ToggleMuteAudio()
+    {
+        return MediaKeyService.Send("volume_mute");
+    }
+
     public void SetClipboard(string text)
     {
         if (string.IsNullOrEmpty(text)) return;

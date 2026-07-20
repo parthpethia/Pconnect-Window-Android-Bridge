@@ -1,0 +1,98 @@
+.compare {
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.compare__inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 140px 40px;
+}
+
+.compare__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+
+.compare__card {
+  padding: 48px;
+  border-radius: 2px;
+}
+
+.compare__card--pconnect {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+.compare__card--other {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.compare__badge {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  margin-bottom: 40px;
+}
+
+.compare__card--pconnect .compare__badge {
+  color: var(--accent);
+}
+
+.compare__card--other .compare__badge {
+  color: var(--accent-light);
+}
+
+.compare__row {
+  padding: 20px 0;
+  border-top: 1px solid;
+}
+
+.compare__card--pconnect .compare__row {
+  border-color: rgba(10, 10, 15, 0.1);
+}
+
+.compare__card--other .compare__row {
+  border-color: var(--border-subtle);
+}
+
+.compare__label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.compare__card--pconnect .compare__label {
+  color: rgba(10, 10, 15, 0.4);
+}
+
+.compare__card--other .compare__label {
+  color: var(--text-muted);
+}
+
+.compare__value {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.compare__card--other .compare__value {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+  .compare__inner {
+    padding: 80px 20px;
+  }
+  .compare__grid {
+    grid-template-columns: 1fr;
+  }
+  .compare__card {
+    padding: 36px 28px;
+  }
+}

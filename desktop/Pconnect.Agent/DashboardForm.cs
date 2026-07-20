@@ -1,13 +1,52 @@
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Text.Json;
+using System.Windows.Forms;
 using Pconnect.Agent.Services;
+using Pconnect.Agent.UI;
+using QRCoder;
 
 namespace Pconnect.Agent;
 
 internal sealed class DashboardForm : Form
 {
     private readonly AgentRuntime _runtime;
-    private readonly Label _serverValue;
-    private readonly Label _deviceValue;
-    private readonly Button _toggleServerButton;
+    private readonly SystemMetricsService _metricsService = new();
+    private readonly System.Windows.Forms.Timer _refreshTimer;
+
+    // UI Controls
+    private readonly ModernTabControl _tabControl;
+    private readonly Panel _contentPanel;
+
+    // Overview Tab Controls
+    private Panel? _overviewPage;
+    private Label? _serverStatusValue;
+    private Label? _connectedDeviceValue;
+    private Label? _ipAddressesValue;
+    private ModernButton? _toggleServerButton;
+
+    // Windows Control Tab Controls
+    private Panel? _controlPage;
+    private ModernSlider? _volumeSlider;
+    private ModernSlider? _brightnessSlider;
+
+    // Pairing Tab Controls
+    private Panel? _pairingPage;
+    private Label? _pinCodeLabel;
+    private PictureBox? _qrPictureBox;
+    private Label? _qrUrlLabel;
+
+    // System Metrics Tab Controls
+    private Panel? _metricsPage;
+    private ModernProgressBar? _cpuProgressBar;
+    private ModernProgressBar? _ramProgressBar;
+    private Label? _uptimeLabel;
+    private Label? _processCountLabel;
+
+    // Audit Logs Tab Controls
+    private Panel? _auditPage;
+    private ListView? _auditListView;
 
     internal bool AllowClose { get; set; }
 
@@ -15,142 +54,51 @@ internal sealed class DashboardForm : Form
     {
         _runtime = runtime;
 
-        Text = _runtime.SafeStartup.IsSafeMode ? "Pconnect Dashboard (safe mode)" : "Pconnect Dashboard";
-        Width = 520;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
+        // Form properties
+        Text = _runtime.SafeStartup.IsSafeMode ? "Pconnect Agent (Safe Mode)" : "Pconnect Agent";
+        Width = 780;
+        Height = 640;
+        MinimumSize = new Size(780, 640);
         StartPosition = FormStartPosition.CenterScreen;
+        BackColor = ThemeColors.Background;
+        ForeColor = ThemeColors.TextPrimary;
+        Font = ThemeColors.BodyFont;
+        Icon = SystemIcons.Application;
 
-        BackColor = SystemColors.Window;
+        // Top Header Panel
+        var headerPanel = CreateHeaderPanel();
+        Controls.Add(headerPanel);
 
-        var header = new Label
+        // Tab Bar Navigation
+        _tabControl = new ModernTabControl
         {
-            Text = "Pconnect",
-            AutoSize = true,
-            Font = new Font(Font, FontStyle.Bold),
-            Left = 18,
-            Top = 16,
+            Dock = DockStyle.Top,
+            Height = 44,
         };
+        _tabControl.Tabs.AddRange(new[] { "Overview", "Windows Control", "Pairing & QR", "System Stats", "Audit Logs" });
+        _tabControl.SelectedIndexChanged += (_, _) => SwitchTab(_tabControl.SelectedIndex);
+        Controls.Add(_tabControl);
 
-        var subtitle = new Label
+        // Main Content Area
+        _contentPanel = new Panel
         {
-            Text = "LAN-only control • Hold Shift at launch for safe mode • Tray menu: pairing & diagnostics",
-            AutoSize = true,
-            ForeColor = SystemColors.GrayText,
-            Left = 18,
-            Top = 40,
+            Dock = DockStyle.Fill,
+            BackColor = ThemeColors.Background,
+            Padding = new Padding(16, 12, 16, 12),
         };
+        Controls.Add(_contentPanel);
 
-        bool isElevated;
-        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
-        {
-            var principal = new System.Security.Principal.WindowsPrincipal(identity);
-            isElevated = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-        }
+        // Build Pages
+        BuildOverviewPage();
+        BuildControlPage();
+        BuildPairingPage();
+        BuildMetricsPage();
+        BuildAuditPage();
 
-        var safeOffset = 0;
-        if (_runtime.SafeStartup.IsSafeMode)
-        {
-            safeOffset = 40;
-            var safeBanner = new Label
-            {
-                Text = "Safe mode: screen capture, custom commands, notifications mirror, and UDP discovery are off. " +
-                       string.Join("; ", _runtime.SafeStartup.Reasons),
-                Left = 18,
-                Top = 56,
-                Width = ClientSize.Width - 36,
-                Height = 36,
-                ForeColor = Color.DarkOrange,
-                AutoSize = false,
-            };
-            Controls.Add(safeBanner);
-        }
+        // Default tab: Overview
+        SwitchTab(0);
 
-        var adminOffset = 0;
-        if (!isElevated)
-        {
-            adminOffset = 40;
-            var adminBanner = new Label
-            {
-                Text = "Warning: Running without administrator privileges. Keyboard and mouse input may be blocked when controlling elevated applications.",
-                Left = 18,
-                Top = 56 + safeOffset,
-                Width = ClientSize.Width - 36,
-                Height = 36,
-                ForeColor = Color.Red,
-                AutoSize = false,
-            };
-            Controls.Add(adminBanner);
-        }
-
-        var totalOffset = safeOffset + adminOffset;
-        Height = 240 + totalOffset;
-
-        var grid = new TableLayoutPanel
-        {
-            Left = 18,
-            Top = 72 + totalOffset,
-            Width = ClientSize.Width - 36,
-            Height = 80,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            ColumnCount = 2,
-            RowCount = 2,
-            AutoSize = false,
-        };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        var serverLabel = MakeKeyLabel("Server");
-        _serverValue = MakeValueLabel();
-
-        var deviceLabel = MakeKeyLabel("Connected device");
-        _deviceValue = MakeValueLabel();
-
-        grid.Controls.Add(serverLabel, 0, 0);
-        grid.Controls.Add(_serverValue, 1, 0);
-        grid.Controls.Add(deviceLabel, 0, 1);
-        grid.Controls.Add(_deviceValue, 1, 1);
-
-        _toggleServerButton = new Button
-        {
-            Left = 18,
-            Top = 170 + totalOffset,
-            Width = 160,
-            Height = 32,
-            Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
-            UseVisualStyleBackColor = true,
-        };
-        _toggleServerButton.Click += async (_, _) => await ToggleServerAsync();
-
-        var closeButton = new Button
-        {
-            Text = "Close",
-            Left = 190,
-            Top = 170 + totalOffset,
-            Width = 100,
-            Height = 32,
-            Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
-            UseVisualStyleBackColor = true,
-        };
-        closeButton.Click += (_, _) => Hide();
-
-        var hint = new Label
-        {
-            Text = "Tip: Close hides the window; use tray icon to reopen.",
-            AutoSize = true,
-            ForeColor = SystemColors.GrayText,
-            Left = 18,
-            Top = 206 + totalOffset,
-            Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
-        };
-
-        Controls.Add(header);
-        Controls.Add(subtitle);
-        Controls.Add(grid);
-        Controls.Add(_toggleServerButton);
-        Controls.Add(closeButton);
-        Controls.Add(hint);
-
+        // Handle Close to Tray
         FormClosing += (_, e) =>
         {
             if (!AllowClose && e.CloseReason == CloseReason.UserClosing)
@@ -160,35 +108,744 @@ internal sealed class DashboardForm : Form
             }
         };
 
+        // Runtime State Updates
         _runtime.StateChanged += (_, _) => PostUpdateUi();
-
         Shown += (_, _) => UpdateUi();
+
+        // 1-second metric timer
+        _refreshTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _refreshTimer.Tick += (_, _) => OnTimerTick();
+        _refreshTimer.Start();
     }
 
-    private static Label MakeKeyLabel(string text)
+    private Panel CreateHeaderPanel()
     {
-        return new Label
+        var header = new Panel
         {
-            Text = text,
-            AutoSize = true,
-            ForeColor = SystemColors.GrayText,
-            Padding = new Padding(0, 6, 0, 6),
-            Anchor = AnchorStyles.Left,
+            Dock = DockStyle.Top,
+            Height = 72,
+            BackColor = ThemeColors.Surface,
+            Padding = new Padding(20, 12, 20, 12),
         };
+
+        var titleLabel = new Label
+        {
+            Text = "Pconnect Desktop Agent",
+            Font = ThemeColors.HeaderFont,
+            ForeColor = ThemeColors.TextPrimary,
+            AutoSize = true,
+            Left = 20,
+            Top = 14,
+        };
+
+        var subtitleLabel = new Label
+        {
+            Text = "LAN Remote Control & Hardware Bridge for Windows",
+            Font = ThemeColors.SubtitleFont,
+            ForeColor = ThemeColors.TextSecondary,
+            AutoSize = true,
+            Left = 20,
+            Top = 42,
+        };
+
+        bool isElevated;
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+        {
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            isElevated = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+
+        if (!isElevated)
+        {
+            var relaunchBtn = new ModernButton
+            {
+                Text = "Relaunch as Admin",
+                Style = ModernButtonStyle.Primary,
+                Width = 150,
+                Height = 34,
+                Top = 19,
+            };
+            relaunchBtn.Left = header.Width - relaunchBtn.Width - 20;
+            relaunchBtn.Click += (_, _) => RelaunchAsAdmin();
+            header.Controls.Add(relaunchBtn);
+            header.Resize += (_, _) => { relaunchBtn.Left = header.Width - relaunchBtn.Width - 20; };
+        }
+        else
+        {
+            var badgeLabel = new Label
+            {
+                Text = "Elevated (Admin)",
+                Font = ThemeColors.SmallFont,
+                ForeColor = ThemeColors.Success,
+                AutoSize = true,
+                Top = 26,
+            };
+            badgeLabel.Left = header.Width - badgeLabel.Width - 24;
+            header.Resize += (_, _) => { badgeLabel.Left = header.Width - badgeLabel.Width - 24; };
+            header.Controls.Add(badgeLabel);
+        }
+
+        header.Controls.Add(titleLabel);
+        header.Controls.Add(subtitleLabel);
+
+        return header;
     }
 
-    private static Label MakeValueLabel()
+    private static void RelaunchAsAdmin()
     {
-        return new Label
+        try
         {
-            AutoSize = true,
-            Padding = new Padding(0, 6, 0, 6),
-            Anchor = AnchorStyles.Left,
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exePath)) return;
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = exePath,
+                UseShellExecute = true,
+                Verb = "runas"
+            };
+            Process.Start(psi);
+            Application.Exit();
+        }
+        catch
+        {
+            // UAC prompt dismissed or cancelled
+        }
+    }
+
+    private void SwitchTab(int index)
+    {
+        _contentPanel.Controls.Clear();
+        switch (index)
+        {
+            case 0:
+                if (_overviewPage != null) _contentPanel.Controls.Add(_overviewPage);
+                break;
+            case 1:
+                if (_controlPage != null) _contentPanel.Controls.Add(_controlPage);
+                break;
+            case 2:
+                if (_pairingPage != null) _contentPanel.Controls.Add(_pairingPage);
+                RefreshPairingCode();
+                break;
+            case 3:
+                if (_metricsPage != null) _contentPanel.Controls.Add(_metricsPage);
+                UpdateMetrics();
+                break;
+            case 4:
+                if (_auditPage != null) _contentPanel.Controls.Add(_auditPage);
+                RefreshAuditLogs();
+                break;
+        }
+    }
+
+    #region Tab 0: Overview Page
+    private void BuildOverviewPage()
+    {
+        _overviewPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+
+        int top = 8;
+        int cardWidth = 726;
+
+        // Admin Warning Banner if non-elevated
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+        {
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            if (!principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+            {
+                var adminCard = new ModernCard
+                {
+                    Top = top,
+                    Left = 0,
+                    Width = cardWidth,
+                    Height = 60,
+                    CardBgColor = Color.FromArgb(45, 25, 25),
+                    BorderColor = ThemeColors.Danger,
+                    Title = "Running as Standard User",
+                    Subtitle = "Mouse & keyboard input may be blocked when controlling elevated apps.",
+                    Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                };
+
+                var adminCardBtn = new ModernButton
+                {
+                    Text = "Grant Admin Access",
+                    Style = ModernButtonStyle.Danger,
+                    Left = cardWidth - 170,
+                    Top = 13,
+                    Width = 155,
+                    Height = 34,
+                    Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                };
+                adminCardBtn.Click += (_, _) => RelaunchAsAdmin();
+                adminCard.Controls.Add(adminCardBtn);
+
+                _overviewPage.Controls.Add(adminCard);
+                top += 70;
+            }
+        }
+
+        // Safe Mode Banner
+        if (_runtime.SafeStartup.IsSafeMode)
+        {
+            var safeCard = new ModernCard
+            {
+                Top = top,
+                Left = 0,
+                Width = cardWidth,
+                Height = 60,
+                CardBgColor = Color.FromArgb(45, 35, 20),
+                BorderColor = ThemeColors.Warning,
+                Title = "Safe Mode Active",
+                Subtitle = string.Join("; ", _runtime.SafeStartup.Reasons),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            };
+            _overviewPage.Controls.Add(safeCard);
+            top += 70;
+        }
+
+        // Server Status Card
+        var statusCard = new ModernCard
+        {
+            Top = top,
+            Left = 0,
+            Width = cardWidth,
+            Height = 165,
+            Title = "Server Status & Network Info",
+            Subtitle = "Local network WebSocket server listening for mobile remote connections",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
+
+        var serverLabel = new Label { Text = "Server Status:", Left = 20, Top = 58, AutoSize = true, ForeColor = ThemeColors.TextSecondary };
+        _serverStatusValue = new Label { Text = "Active", Left = 150, Top = 58, AutoSize = true, Font = ThemeColors.BoldBodyFont, ForeColor = ThemeColors.Success };
+
+        var deviceLabel = new Label { Text = "Connected Device:", Left = 20, Top = 90, AutoSize = true, ForeColor = ThemeColors.TextSecondary };
+        _connectedDeviceValue = new Label { Text = "None", Left = 150, Top = 90, AutoSize = true, Font = ThemeColors.BoldBodyFont, ForeColor = ThemeColors.TextPrimary };
+
+        var ipLabel = new Label { Text = "LAN IP Addresses:", Left = 20, Top = 122, AutoSize = true, ForeColor = ThemeColors.TextSecondary };
+        _ipAddressesValue = new Label { Text = "127.0.0.1", Left = 150, Top = 122, AutoSize = true, Font = ThemeColors.BodyFont, ForeColor = ThemeColors.Primary };
+
+        _toggleServerButton = new ModernButton
+        {
+            Text = "Stop Server",
+            Style = ModernButtonStyle.Danger,
+            Left = cardWidth - 170,
+            Top = 60,
+            Width = 150,
+            Height = 38,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+        _toggleServerButton.Click += async (_, _) => await ToggleServerAsync();
+
+        statusCard.Controls.Add(serverLabel);
+        statusCard.Controls.Add(_serverStatusValue);
+        statusCard.Controls.Add(deviceLabel);
+        statusCard.Controls.Add(_connectedDeviceValue);
+        statusCard.Controls.Add(ipLabel);
+        statusCard.Controls.Add(_ipAddressesValue);
+        statusCard.Controls.Add(_toggleServerButton);
+
+        _overviewPage.Controls.Add(statusCard);
+        top += 177;
+
+        // Quick Setup Card
+        var quickCard = new ModernCard
+        {
+            Top = top,
+            Left = 0,
+            Width = cardWidth,
+            Height = 118,
+            Title = "Quick Setup & Mobile Pairing",
+            Subtitle = "Connect your mobile phone to control volume, input, media, and desktop view.",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        var pairButton = new ModernButton
+        {
+            Text = "Show Pairing PIN & QR",
+            Style = ModernButtonStyle.Primary,
+            Left = 20,
+            Top = 60,
+            Width = 200,
+            Height = 38,
+        };
+        pairButton.Click += (_, _) => _tabControl.SelectedIndex = 2;
+
+        var copyWsButton = new ModernButton
+        {
+            Text = "Copy WebSocket URL",
+            Style = ModernButtonStyle.Secondary,
+            Left = 235,
+            Top = 60,
+            Width = 190,
+            Height = 38,
+        };
+        copyWsButton.Click += (_, _) => CopyWebSocketUrl();
+
+        quickCard.Controls.Add(pairButton);
+        quickCard.Controls.Add(copyWsButton);
+
+        _overviewPage.Controls.Add(quickCard);
+    }
+    #endregion
+
+    #region Tab 1: Windows Control Center Page
+    private void BuildControlPage()
+    {
+        _controlPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+
+        int top = 8;
+        int cardWidth = 726;
+
+        // Audio & Display Control Card
+        var audioDisplayCard = new ModernCard
+        {
+            Top = top,
+            Left = 0,
+            Width = cardWidth,
+            Height = 150,
+            Title = "Audio & Display Controls",
+            Subtitle = "Adjust Windows master volume levels and screen brightness",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        var volLabel = new Label { Text = "Master Volume", Left = 20, Top = 52, AutoSize = true, Font = ThemeColors.BoldBodyFont };
+        _volumeSlider = new ModernSlider
+        {
+            Left = 145,
+            Top = 46,
+            Width = cardWidth - 275,
+            Value = 50,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+        _volumeSlider.ValueChanged += (_, _) => _runtime.Pc.SetVolume(_volumeSlider.Value);
+
+        var muteButton = new ModernButton
+        {
+            Text = "Mute",
+            Style = ModernButtonStyle.Secondary,
+            Left = cardWidth - 115,
+            Top = 46,
+            Width = 95,
+            Height = 32,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+        muteButton.Click += (_, _) => _runtime.Pc.ToggleMuteAudio();
+
+        var brLabel = new Label { Text = "Brightness", Left = 20, Top = 98, AutoSize = true, Font = ThemeColors.BoldBodyFont };
+        _brightnessSlider = new ModernSlider
+        {
+            Left = 145,
+            Top = 94,
+            Width = cardWidth - 165,
+            Value = 80,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+        _brightnessSlider.ValueChanged += (_, _) => _runtime.Pc.SetBrightness(_brightnessSlider.Value);
+
+        audioDisplayCard.Controls.Add(volLabel);
+        audioDisplayCard.Controls.Add(_volumeSlider);
+        audioDisplayCard.Controls.Add(muteButton);
+        audioDisplayCard.Controls.Add(brLabel);
+        audioDisplayCard.Controls.Add(_brightnessSlider);
+
+        _controlPage.Controls.Add(audioDisplayCard);
+        top += 162;
+
+        // Windows Power & Security Actions Card
+        var powerCard = new ModernCard
+        {
+            Top = top,
+            Left = 0,
+            Width = cardWidth,
+            Height = 115,
+            Title = "Windows Power & Security Actions",
+            Subtitle = "Instant session state and power management",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        int btnGap = 14;
+        int btnWidth = (cardWidth - 40 - (3 * btnGap)) / 4;
+
+        var lockBtn = new ModernButton { Text = "Lock PC", Style = ModernButtonStyle.Secondary, Left = 20, Top = 58, Width = btnWidth, Height = 38 };
+        lockBtn.Click += (_, _) => _runtime.Pc.Lock();
+
+        var sleepBtn = new ModernButton { Text = "Sleep PC", Style = ModernButtonStyle.Secondary, Left = 20 + btnWidth + btnGap, Top = 58, Width = btnWidth, Height = 38 };
+        sleepBtn.Click += (_, _) => _runtime.Pc.Sleep();
+
+        var restartBtn = new ModernButton { Text = "Restart PC", Style = ModernButtonStyle.Outline, Left = 20 + (2 * (btnWidth + btnGap)), Top = 58, Width = btnWidth, Height = 38 };
+        restartBtn.Click += (_, _) =>
+        {
+            if (MessageBox.Show("Are you sure you want to restart your PC?", "Pconnect", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                _runtime.Pc.Restart();
+        };
+
+        var shutdownBtn = new ModernButton { Text = "Shutdown PC", Style = ModernButtonStyle.Danger, Left = 20 + (3 * (btnWidth + btnGap)), Top = 58, Width = btnWidth, Height = 38 };
+        shutdownBtn.Click += (_, _) =>
+        {
+            if (MessageBox.Show("Are you sure you want to shutdown your PC?", "Pconnect", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                _runtime.Pc.Shutdown();
+        };
+
+        powerCard.Controls.Add(lockBtn);
+        powerCard.Controls.Add(sleepBtn);
+        powerCard.Controls.Add(restartBtn);
+        powerCard.Controls.Add(shutdownBtn);
+
+        _controlPage.Controls.Add(powerCard);
+        top += 127;
+
+        // Windows Shortcuts & App Launcher Card
+        var appsCard = new ModernCard
+        {
+            Top = top,
+            Left = 0,
+            Width = cardWidth,
+            Height = 115,
+            Title = "Quick Windows Shortcuts & Launchers",
+            Subtitle = "Launch essential desktop utilities with one click",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        int appGap = 12;
+        int appWidth = (cardWidth - 40 - (4 * appGap)) / 5;
+
+        var taskmgrBtn = new ModernButton { Text = "Task Manager", Style = ModernButtonStyle.Secondary, Left = 20, Top = 58, Width = appWidth, Height = 38 };
+        taskmgrBtn.Click += (_, _) => _runtime.Pc.OpenTaskManager();
+
+        var desktopBtn = new ModernButton { Text = "Show Desktop", Style = ModernButtonStyle.Secondary, Left = 20 + appWidth + appGap, Top = 58, Width = appWidth, Height = 38 };
+        desktopBtn.Click += (_, _) => _runtime.Pc.ShowDesktop();
+
+        var taskviewBtn = new ModernButton { Text = "Task View", Style = ModernButtonStyle.Secondary, Left = 20 + (2 * (appWidth + appGap)), Top = 58, Width = appWidth, Height = 38 };
+        taskviewBtn.Click += (_, _) => _runtime.Pc.TaskView();
+
+        var cmdBtn = new ModernButton { Text = "CMD", Style = ModernButtonStyle.Secondary, Left = 20 + (3 * (appWidth + appGap)), Top = 58, Width = appWidth, Height = 38 };
+        cmdBtn.Click += (_, _) => _runtime.Pc.Launch("cmd.exe", null);
+
+        var explorerBtn = new ModernButton { Text = "Explorer", Style = ModernButtonStyle.Secondary, Left = 20 + (4 * (appWidth + appGap)), Top = 58, Width = appWidth, Height = 38 };
+        explorerBtn.Click += (_, _) => _runtime.Pc.Launch("explorer.exe", null);
+
+        appsCard.Controls.Add(taskmgrBtn);
+        appsCard.Controls.Add(desktopBtn);
+        appsCard.Controls.Add(taskviewBtn);
+        appsCard.Controls.Add(cmdBtn);
+        appsCard.Controls.Add(explorerBtn);
+
+        _controlPage.Controls.Add(appsCard);
+    }
+    #endregion
+
+    #region Tab 2: Pairing & QR Code Page
+    private void BuildPairingPage()
+    {
+        _pairingPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        int cardWidth = 726;
+
+        var qrCard = new ModernCard
+        {
+            Top = 8,
+            Left = 0,
+            Width = cardWidth,
+            Height = 370,
+            Title = "Device Pairing & QR Code",
+            Subtitle = "Scan with Pconnect Mobile App or enter the rotating 6-digit Security PIN code.",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        var pinTitle = new Label
+        {
+            Text = "Security Pairing PIN",
+            Font = ThemeColors.SubtitleFont,
+            ForeColor = ThemeColors.TextSecondary,
+            Left = 25,
+            Top = 55,
+            AutoSize = true,
+        };
+
+        _pinCodeLabel = new Label
+        {
+            Text = "------",
+            Font = new Font("Segoe UI", 36, FontStyle.Bold),
+            ForeColor = ThemeColors.Primary,
+            Left = 25,
+            Top = 75,
+            AutoSize = true,
+        };
+
+        _qrUrlLabel = new Label
+        {
+            Text = "WebSocket URL: ws://...",
+            Font = ThemeColors.BodyFont,
+            ForeColor = ThemeColors.TextSecondary,
+            Left = 25,
+            Top = 155,
+            MaximumSize = new Size(400, 0),
+            AutoSize = true,
+        };
+
+        _qrPictureBox = new PictureBox
+        {
+            Left = cardWidth - 255,
+            Top = 55,
+            Width = 230,
+            Height = 230,
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.White,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+
+        var copyUrlBtn = new ModernButton
+        {
+            Text = "Copy WebSocket URL",
+            Style = ModernButtonStyle.Primary,
+            Left = 25,
+            Top = 235,
+            Width = 190,
+            Height = 38,
+        };
+        copyUrlBtn.Click += (_, _) => CopyWebSocketUrl();
+
+        var copyPinBtn = new ModernButton
+        {
+            Text = "Copy PIN",
+            Style = ModernButtonStyle.Secondary,
+            Left = 225,
+            Top = 235,
+            Width = 130,
+            Height = 38,
+        };
+        copyPinBtn.Click += (_, _) =>
+        {
+            var code = _runtime.Pairing.CurrentCode;
+            if (!string.IsNullOrEmpty(code)) Clipboard.SetText(code);
+        };
+
+        qrCard.Controls.Add(pinTitle);
+        qrCard.Controls.Add(_pinCodeLabel);
+        qrCard.Controls.Add(_qrUrlLabel);
+        qrCard.Controls.Add(_qrPictureBox);
+        qrCard.Controls.Add(copyUrlBtn);
+        qrCard.Controls.Add(copyPinBtn);
+
+        _pairingPage.Controls.Add(qrCard);
+    }
+
+    private void RefreshPairingCode()
+    {
+        var code = _runtime.Pairing.CurrentCode;
+        if (_pinCodeLabel != null) _pinCodeLabel.Text = code;
+        if (_qrUrlLabel != null) _qrUrlLabel.Text = $"WebSocket URL: {_runtime.GetLikelyWebSocketUrl() ?? "Unavailable"}";
+
+        if (_qrPictureBox != null)
+        {
+            try
+            {
+                var url = _runtime.GetLikelyWebSocketUrl();
+                if (url == null)
+                {
+                    _qrPictureBox.Image?.Dispose();
+                    _qrPictureBox.Image = null;
+                    return;
+                }
+
+                var uri = new Uri(url);
+                var qrData = JsonSerializer.Serialize(new
+                {
+                    ip = uri.Host,
+                    port = uri.Port,
+                    wssPort = AgentRuntime.DefaultWssPort,
+                    pairingCode = code,
+                });
+
+                using var qrGenerator = new QRCodeGenerator();
+                using var qrCodeData = qrGenerator.CreateQrCode(qrData, QRCodeGenerator.ECCLevel.M);
+                using var qrCode = new PngByteQRCode(qrCodeData);
+                var pngBytes = qrCode.GetGraphic(5);
+
+                using var ms = new MemoryStream(pngBytes);
+                var oldImage = _qrPictureBox.Image;
+                _qrPictureBox.Image = Image.FromStream(ms);
+                oldImage?.Dispose();
+            }
+            catch
+            {
+                // QR generation fallback
+            }
+        }
+    }
+    #endregion
+
+    #region Tab 3: System Performance Page
+    private void BuildMetricsPage()
+    {
+        _metricsPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        int cardWidth = 726;
+
+        var statsCard = new ModernCard
+        {
+            Top = 8,
+            Left = 0,
+            Width = cardWidth,
+            Height = 235,
+            Title = "Real-time Hardware Resource Usage",
+            Subtitle = "System telemetry monitored locally and streamable to paired mobile apps",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        _cpuProgressBar = new ModernProgressBar
+        {
+            Left = 20,
+            Top = 55,
+            Width = cardWidth - 40,
+            Label = "Processor (CPU) Usage",
+            Value = 0,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        _ramProgressBar = new ModernProgressBar
+        {
+            Left = 20,
+            Top = 118,
+            Width = cardWidth - 40,
+            Label = "Memory (RAM) Usage",
+            Value = 0,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+
+        _uptimeLabel = new Label
+        {
+            Text = "System Uptime: 0h 0m 0s",
+            Font = ThemeColors.BodyFont,
+            ForeColor = ThemeColors.TextSecondary,
+            Left = 20,
+            Top = 188,
+            AutoSize = true,
+        };
+
+        _processCountLabel = new Label
+        {
+            Text = "Active Processes: 0",
+            Font = ThemeColors.BodyFont,
+            ForeColor = ThemeColors.TextSecondary,
+            Left = cardWidth - 200,
+            Top = 188,
+            AutoSize = true,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+
+        statsCard.Controls.Add(_cpuProgressBar);
+        statsCard.Controls.Add(_ramProgressBar);
+        statsCard.Controls.Add(_uptimeLabel);
+        statsCard.Controls.Add(_processCountLabel);
+
+        _metricsPage.Controls.Add(statsCard);
+    }
+
+    private void UpdateMetrics()
+    {
+        var snapshot = _metricsService.GetSnapshot();
+        if (_cpuProgressBar != null) _cpuProgressBar.Value = snapshot.CpuPercent;
+        if (_ramProgressBar != null)
+        {
+            _ramProgressBar.Value = snapshot.RamPercent;
+            _ramProgressBar.Label = $"Memory (RAM) Usage ({snapshot.UsedRamMb} MB / {snapshot.TotalRamMb} MB)";
+        }
+
+        if (_uptimeLabel != null)
+        {
+            var u = snapshot.Uptime;
+            _uptimeLabel.Text = $"System Uptime: {(int)u.TotalHours}h {u.Minutes}m {u.Seconds}s";
+        }
+
+        if (_processCountLabel != null)
+        {
+            _processCountLabel.Text = $"Active Processes: {snapshot.ProcessCount}";
+        }
+    }
+    #endregion
+
+    #region Tab 4: Audit Logs Page
+    private void BuildAuditPage()
+    {
+        _auditPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        int cardWidth = 726;
+
+        var auditCard = new ModernCard
+        {
+            Top = 8,
+            Left = 0,
+            Width = cardWidth,
+            Height = 380,
+            Title = "Security Audit Log",
+            Subtitle = "Historical record of incoming remote commands and session actions",
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
+        };
+
+        _auditListView = new ListView
+        {
+            Left = 20,
+            Top = 55,
+            Width = cardWidth - 40,
+            Height = 300,
+            View = View.Details,
+            FullRowSelect = true,
+            GridLines = true,
+            BackColor = ThemeColors.Surface,
+            ForeColor = ThemeColors.TextPrimary,
+            BorderStyle = BorderStyle.FixedSingle,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
+        };
+
+        int colWidth = (cardWidth - 45) / 4;
+        _auditListView.Columns.Add("Timestamp", colWidth);
+        _auditListView.Columns.Add("Device", colWidth);
+        _auditListView.Columns.Add("Command / Event", colWidth * 2);
+
+        auditCard.Controls.Add(_auditListView);
+        _auditPage.Controls.Add(auditCard);
+    }
+
+    private void RefreshAuditLogs()
+    {
+        if (_auditListView == null) return;
+        _auditListView.Items.Clear();
+
+        try
+        {
+            var dateStr = DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            var logs = _runtime.AuditLog.GetLogs(dateStr);
+            foreach (var entry in logs)
+            {
+                var item = new ListViewItem(entry.Time)
+                {
+                    ForeColor = ThemeColors.TextPrimary,
+                };
+                item.SubItems.Add(entry.Device);
+                item.SubItems.Add(entry.Action);
+                _auditListView.Items.Add(item);
+            }
+        }
+        catch
+        {
+            // audit log read fallback
+        }
+    }
+    #endregion
+
+    private void OnTimerTick()
+    {
+        if (_tabControl.SelectedIndex == 2)
+        {
+            RefreshPairingCode();
+        }
+        else if (_tabControl.SelectedIndex == 3)
+        {
+            UpdateMetrics();
+        }
     }
 
     private async Task ToggleServerAsync()
     {
+        if (_toggleServerButton == null) return;
         _toggleServerButton.Enabled = false;
 
         try
@@ -213,35 +870,50 @@ internal sealed class DashboardForm : Form
 
     private void PostUpdateUi()
     {
-        if (IsDisposed)
-        {
-            return;
-        }
-
-        try
-        {
-            BeginInvoke(UpdateUi);
-        }
-        catch
-        {
-            // ignore
-        }
+        if (IsDisposed) return;
+        try { BeginInvoke(UpdateUi); }
+        catch { }
     }
 
     private void UpdateUi()
     {
-        if (IsDisposed)
+        if (IsDisposed) return;
+
+        bool running = _runtime.IsServerRunning;
+        if (_serverStatusValue != null)
         {
+            _serverStatusValue.Text = running ? "Active (Listening)" : "Stopped";
+            _serverStatusValue.ForeColor = running ? ThemeColors.Success : ThemeColors.Danger;
+        }
+
+        if (_toggleServerButton != null)
+        {
+            _toggleServerButton.Text = running ? "Stop Server" : "Start Server";
+            _toggleServerButton.Style = running ? ModernButtonStyle.Danger : ModernButtonStyle.Success;
+        }
+
+        if (_connectedDeviceValue != null)
+        {
+            _connectedDeviceValue.Text = _runtime.ConnectedDeviceDisplay;
+        }
+
+        if (_ipAddressesValue != null)
+        {
+            var ips = _runtime.GetLanIpv4Candidates();
+            _ipAddressesValue.Text = ips.Count > 0 ? string.Join(", ", ips) : "No LAN IPv4 detected";
+        }
+    }
+
+    private void CopyWebSocketUrl()
+    {
+        var url = _runtime.GetLikelyWebSocketUrl();
+        if (url == null)
+        {
+            MessageBox.Show("Could not determine an IP address.", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        _serverValue.Text = _runtime.IsServerRunning ? "Running" : "Stopped";
-        _deviceValue.Text = _runtime.ConnectedDeviceDisplay;
-        _toggleServerButton.Text = _runtime.IsServerRunning ? "Stop server" : "Start server";
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        base.Dispose(disposing);
+        Clipboard.SetText(url);
+        MessageBox.Show($"Copied to clipboard:\n{url}", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 }

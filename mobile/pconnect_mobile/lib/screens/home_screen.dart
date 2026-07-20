@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,10 @@ import 'app_launcher_screen.dart';
 import '../services/connection.dart';
 import '../main.dart';
 import '../widgets/screen_preview_webrtc.dart';
+import '../widgets/transfer_progress_sheet.dart';
+import '../widgets/resume_transfer_dialog.dart';
+import 'transfer_queue_screen.dart';
+import 'pc_download_browser_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final PcConnection? conn;
@@ -37,18 +42,24 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     // Request app list + commands on connect
-    if (widget.status.connected) {
+    if (widget.status.connected && widget.conn != null) {
       widget.conn?.requestAppList();
       widget.conn?.requestCommands();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ResumeTransferDialog.checkAndShow(context, widget.conn!);
+      });
     }
   }
 
   @override
   void didUpdateWidget(HomeScreen old) {
     super.didUpdateWidget(old);
-    if (widget.status.connected && !old.status.connected) {
+    if (widget.status.connected && !old.status.connected && widget.conn != null) {
       widget.conn?.requestAppList();
       widget.conn?.requestCommands();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ResumeTransferDialog.checkAndShow(context, widget.conn!);
+      });
     }
   }
 
@@ -65,15 +76,123 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _pickAndUploadFiles(BuildContext context) async {
+    final conn = widget.conn;
+    if (conn == null) return;
+
+    final mode = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.description_rounded),
+              title: const Text('Select Files (Multi-Select)'),
+              onTap: () => Navigator.of(ctx).pop('files'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_open_rounded),
+              title: const Text('Select Folder'),
+              onTap: () => Navigator.of(ctx).pop('folder'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!context.mounted || mode == null) return;
+
+    if (mode == 'files') {
+      final result = await FilePicker.pickFiles(allowMultiple: true);
+      if (result != null && result.files.isNotEmpty) {
+        final validFiles = result.files.where((f) => f.path != null).toList();
+        final totalBytes = validFiles.fold<int>(0, (sum, f) => sum + f.size);
+
+        if (validFiles.length > 50 || totalBytes > 500 * 1024 * 1024) {
+          if (!context.mounted) return;
+          final confirm = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Confirm Large Batch Transfer'),
+              content: Text('Selected ${validFiles.length} files (${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB). Send all files to PC?'),
+              actions: [
+                TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+                FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Send All')),
+              ],
+            ),
+          );
+          if (confirm != true) return;
+        }
+
+        for (final f in validFiles) {
+          conn.uploadFile(f.path!, onProgress: (_) {});
+        }
+      }
+    } else if (mode == 'folder') {
+      final folderPath = await FilePicker.getDirectoryPath();
+      if (folderPath != null) {
+        final dir = Directory(folderPath);
+        if (await dir.exists()) {
+          final fileEntities = await dir.list(recursive: true).where((e) => e is File).cast<File>().toList();
+          int totalBytes = 0;
+          final validPaths = <String>[];
+
+          for (final f in fileEntities) {
+            final len = await f.length();
+            totalBytes += len;
+            validPaths.add(f.path);
+          }
+
+          if (validPaths.length > 50 || totalBytes > 500 * 1024 * 1024) {
+            if (!context.mounted) return;
+            final confirm = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Confirm Folder Transfer'),
+                content: Text('This folder contains ${validPaths.length} files (${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB). Send all?'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+                  FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Send All')),
+                ],
+              ),
+            );
+            if (confirm != true) return;
+          }
+
+          for (final p in validPaths) {
+            conn.uploadFile(p, onProgress: (_) {});
+          }
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final connected = widget.status.connected;
     final conn = widget.conn;
 
-    return Scaffold(
+    final content = Scaffold(
       appBar: AppBar(
         title: Text(widget.status.pcName ?? 'Pconnect'),
         actions: [
+          if (connected && conn != null)
+            IconButton(
+              icon: const Icon(Icons.swap_vert_circle_outlined),
+              tooltip: 'Transfers Queue',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => TransferQueueScreen(conn: conn, onPickFiles: () => _pickAndUploadFiles(context))),
+              ),
+            ),
+          if (connected && conn != null)
+            IconButton(
+              icon: const Icon(Icons.folder_shared_outlined),
+              tooltip: 'Browse PC Files',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => PcDownloadBrowserScreen(conn: conn)),
+              ),
+            ),
           IconButton(
             icon: Icon(connected ? Icons.link_off_rounded : Icons.link_rounded),
             tooltip: connected ? 'Disconnect' : 'Connect',
@@ -134,19 +253,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               _QuickAction(
                 icon: Icons.upload_file_rounded,
-                label: 'Send File',
+                label: 'Send Files',
                 enabled: connected,
-                onTap: () async {
-                  final result = await FilePicker.pickFiles();
-                  if (result != null && result.files.single.path != null) {
-                    conn?.uploadFile(result.files.single.path!, onProgress: (_) {});
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Sending ${result.files.single.name}...')),
-                      );
-                    }
-                  }
-                },
+                onTap: () => _pickAndUploadFiles(context),
               ),
             ],
           ),
@@ -286,6 +395,11 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+
+    if (conn != null) {
+      return TransferProgressOverlay(conn: conn, child: content);
+    }
+    return content;
   }
 }
 
@@ -327,12 +441,12 @@ class _StatusBar extends StatelessWidget {
                     if (status.pcName != null)
                       Text(status.pcName!, style: TextStyle(
                         fontSize: 12,
-                        color: connected ? cs.onPrimaryContainer.withOpacity(0.7) : cs.onErrorContainer.withOpacity(0.7),
+                        color: connected ? cs.onPrimaryContainer.withValues(alpha: 0.7) : cs.onErrorContainer.withValues(alpha: 0.7),
                       )),
                     if (status.role != null)
                       Text('Role: ${status.role}', style: TextStyle(
                         fontSize: 11,
-                        color: connected ? cs.onPrimaryContainer.withOpacity(0.5) : cs.onErrorContainer.withOpacity(0.5),
+                        color: connected ? cs.onPrimaryContainer.withValues(alpha: 0.5) : cs.onErrorContainer.withValues(alpha: 0.5),
                       )),
                     if (status.error != null)
                       Text(status.error!, style: TextStyle(fontSize: 11, color: cs.error)),
@@ -443,8 +557,11 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
   }
 
   Offset _centroid() {
+    if (_pointers.isEmpty) return Offset.zero;
     var sum = Offset.zero;
-    for (final p in _pointers.values) sum += p;
+    for (final p in _pointers.values) {
+      sum += p;
+    }
     return sum / _pointers.length.toDouble();
   }
 
@@ -522,7 +639,7 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
     );
   }
 
-  Widget _buildTrackpad({double? size}) {
+  Widget _buildTrackpad() {
     final cs = Theme.of(context).colorScheme;
     final enabled = widget.connected;
 
@@ -614,18 +731,18 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
               decoration: BoxDecoration(
                 color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: cs.outlineVariant.withOpacity(0.4)),
+                border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.4)),
               ),
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.touch_app, size: 36, color: cs.onSurface.withOpacity(0.15)),
+                    Icon(Icons.touch_app, size: 36, color: cs.onSurface.withValues(alpha: 0.15)),
                     const SizedBox(height: 4),
                     Text(
                       'Tap · 2-finger right click\nLong press drag · 2-finger scroll',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 10, color: cs.onSurface.withOpacity(0.15)),
+                      style: TextStyle(fontSize: 10, color: cs.onSurface.withValues(alpha: 0.15)),
                     ),
                   ],
                 ),

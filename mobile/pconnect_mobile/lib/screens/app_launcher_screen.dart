@@ -64,7 +64,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                     : null,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                 filled: true,
-                fillColor: cs.surfaceContainerHighest.withOpacity(0.5),
+                fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
               ),
               onChanged: (v) => setState(() => _query = v.toLowerCase()),
             ),
@@ -139,7 +139,7 @@ class _AppTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Material(
-      color: cs.surfaceContainerHighest.withOpacity(0.4),
+      color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,

@@ -9,11 +9,24 @@ if (Test-Path "C:\Program Files\Android\Android Studio\jbr") {
     $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 }
 
-Push-Location (Join-Path $PSScriptRoot '..\mobile\pconnect_mobile')
+$mobileDir = Join-Path $PSScriptRoot '..\mobile\pconnect_mobile'
+$outputDir = Join-Path $PSScriptRoot '..\releases'
+if (-not (Test-Path $outputDir)) {
+    New-Item -ItemType Directory -Path $outputDir | Out-Null
+}
+
+Push-Location $mobileDir
 try {
     flutter pub get
     flutter build apk --release
-    Write-Host "Build complete."
+    $apkSource = Join-Path $mobileDir 'build\app\outputs\flutter-apk\app-release.apk'
+    if (Test-Path $apkSource) {
+        $dest = Copy-Item -Path $apkSource -Destination (Join-Path $outputDir 'Pconnect.apk') -Force -PassThru
+        Write-Host "Build complete! APK saved to: $($dest.FullName)"
+    } else {
+        Write-Host "Build finished, but app-release.apk was not found."
+    }
 } finally {
     Pop-Location
 }
+

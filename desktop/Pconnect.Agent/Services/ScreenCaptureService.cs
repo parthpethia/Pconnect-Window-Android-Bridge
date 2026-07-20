@@ -96,7 +96,7 @@ internal sealed class ScreenCaptureService : IDisposable
         {
             if (_running) return;
             _running = true;
-            _intervalMs = Math.Max(300, intervalMs);
+            _intervalMs = Math.Max(100, intervalMs);
             if (targetWidth is > 0 and <= 1920) _targetWidth = targetWidth.Value;
             if (jpegQuality is > 0 and <= 100) _jpegQuality = jpegQuality.Value;
             // First frame on thread pool so timer setup returns immediately.
