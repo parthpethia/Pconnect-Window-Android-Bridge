@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/connection.dart';
+import '../widgets/glass_card.dart';
 
 // ─────────────────────────────────────────────────────
 //  Connection profiles stored in shared_preferences
@@ -334,17 +335,22 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
             const SizedBox(height: 8),
             ...List.generate(_discovered.length, (i) {
               final pc = _discovered[i];
-              return Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: cs.primaryContainer,
-                    child: Icon(Icons.computer_rounded, color: cs.onPrimaryContainer),
-                  ),
-                  title: Text(pc.name),
-                  subtitle: Text('${pc.address.address}:${pc.wsPort}'),
-                  trailing: FilledButton.tonal(
-                    onPressed: () => _connectTo(pc.address.address, pc.wsPort, wssPort: pc.wssPort),
-                    child: const Text('Connect'),
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: GlassCard(
+                  onTap: () => _connectTo(pc.address.address, pc.wsPort, wssPort: pc.wssPort),
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundColor: cs.primary.withValues(alpha: 0.16),
+                      child: Icon(Icons.computer_rounded, color: cs.primary),
+                    ),
+                    title: Text(pc.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text('${pc.address.address}:${pc.wsPort}'),
+                    trailing: FilledButton.tonal(
+                      onPressed: () => _connectTo(pc.address.address, pc.wsPort, wssPort: pc.wssPort),
+                      child: const Text('Connect'),
+                    ),
                   ),
                 ),
               );
@@ -358,29 +364,34 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
             const SizedBox(height: 8),
             ...List.generate(_profiles.length, (i) {
               final p = _profiles[i];
-              return Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: cs.secondaryContainer,
-                    child: Icon(Icons.bookmark_rounded, color: cs.onSecondaryContainer),
-                  ),
-                  title: Text(p.name.isEmpty ? p.ip : p.name),
-                  subtitle: Text('${p.ip}:${p.port}'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.delete_outline, color: cs.error),
-                        onPressed: () async {
-                          await ProfileStore.remove(p.ip, p.port);
-                          await _loadProfiles();
-                        },
-                      ),
-                      FilledButton.tonal(
-                        onPressed: () => _connectTo(p.ip, p.port, wssPort: p.wssPort),
-                        child: const Text('Connect'),
-                      ),
-                    ],
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: GlassCard(
+                  onTap: () => _connectTo(p.ip, p.port, wssPort: p.wssPort),
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundColor: cs.secondary.withValues(alpha: 0.16),
+                      child: Icon(Icons.bookmark_rounded, color: cs.secondary),
+                    ),
+                    title: Text(p.name.isEmpty ? p.ip : p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text('${p.ip}:${p.port}'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.delete_outline, color: cs.error),
+                          onPressed: () async {
+                            await ProfileStore.remove(p.ip, p.port);
+                            await _loadProfiles();
+                          },
+                        ),
+                        FilledButton.tonal(
+                          onPressed: () => _connectTo(p.ip, p.port, wssPort: p.wssPort),
+                          child: const Text('Connect'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );

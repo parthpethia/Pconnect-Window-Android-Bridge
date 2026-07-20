@@ -26,16 +26,32 @@ internal sealed class TrayAppContext : ApplicationContext
         {
             Renderer = new Pconnect.Agent.UI.DarkToolStripRenderer(),
         };
+        bool isElevated;
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+        {
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            isElevated = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+
         var dashboardItem = new ToolStripMenuItem("Dashboard", null, (_, _) => ShowDashboard());
         var browseFilesItem = new ToolStripMenuItem("Browse Shared Files", null, (_, _) => ShowDownloadBrowser());
         var showPairItem = new ToolStripMenuItem("Show pairing code", null, (_, _) => ShowPairingCode());
         var copyWsItem = new ToolStripMenuItem("Copy WebSocket URL", null, (_, _) => CopyWebSocketUrl());
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => Exit());
+
         menu.Items.Add(dashboardItem);
         menu.Items.Add(browseFilesItem);
         menu.Items.Add(showPairItem);
         menu.Items.Add(copyWsItem);
         menu.Items.Add(new ToolStripSeparator());
+
+        if (!isElevated)
+        {
+            var adminItem = new ToolStripMenuItem("Relaunch as Administrator", null, (_, _) => AdminRelaunchHelper.RelaunchAsAdmin());
+            menu.Items.Add(adminItem);
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
         menu.Items.Add(exitItem);
 
         _tray = new NotifyIcon

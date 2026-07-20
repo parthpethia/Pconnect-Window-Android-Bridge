@@ -18,6 +18,7 @@ internal sealed class PairingForm : Form
     public PairingForm(AgentRuntime runtime, string code)
     {
         _runtime = runtime;
+        AutoScaleMode = AutoScaleMode.Dpi;
 
         Text = "Pconnect Pairing";
         Width = 460;

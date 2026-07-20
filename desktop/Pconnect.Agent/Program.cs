@@ -8,10 +8,38 @@ namespace Pconnect.Agent;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        int relaunchFromPid = 0;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (string.Equals(args[i], "--relaunch-from-pid", StringComparison.OrdinalIgnoreCase) &&
+                i + 1 < args.Length &&
+                int.TryParse(args[i + 1], out var pid))
+            {
+                relaunchFromPid = pid;
+                break;
+            }
+        }
+
+        if (relaunchFromPid > 0)
+        {
+            try
+            {
+                using var parent = System.Diagnostics.Process.GetProcessById(relaunchFromPid);
+                if (!parent.HasExited)
+                {
+                    parent.WaitForExit(3000);
+                }
+            }
+            catch
+            {
+                // Process may have already exited
+            }
+        }
+
         using var singleInstanceMutex = new Mutex(initiallyOwned: true, name: "Local\\Pconnect.Agent", createdNew: out var createdNew);
-        if (!createdNew)
+        if (!createdNew && relaunchFromPid == 0)
         {
             // Second launch: ask the already-running instance to show the dashboard.
             // This lets users reopen the UI to start/stop the server.
@@ -25,6 +53,29 @@ internal static class Program
             }
             Environment.ExitCode = 0;
             return;
+        }
+        else if (!createdNew && relaunchFromPid > 0)
+        {
+            bool acquired = false;
+            try
+            {
+                acquired = singleInstanceMutex.WaitOne(3000);
+            }
+            catch (AbandonedMutexException)
+            {
+                acquired = true;
+            }
+
+            if (!acquired)
+            {
+                MessageBox.Show(
+                    "Failed to release previous Pconnect Agent process during admin elevation.",
+                    "Pconnect",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                Environment.ExitCode = 1;
+                return;
+            }
         }
 
         var abnormalExitStreak = StartupCrashTracker.BeginRun();

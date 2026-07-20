@@ -17,6 +17,7 @@ internal sealed class DownloadBrowserForm : Form
 
     public DownloadBrowserForm()
     {
+        AutoScaleMode = AutoScaleMode.Dpi;
         Text = "Pconnect — Shared Files & Downloads";
         Size = new Size(680, 480);
         StartPosition = FormStartPosition.CenterScreen;

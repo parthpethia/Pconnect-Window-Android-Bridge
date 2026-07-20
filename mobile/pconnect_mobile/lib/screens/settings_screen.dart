@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/connection.dart';
 import '../services/tofu_pin_store.dart';
+import '../widgets/collapsible_section.dart';
 import '../main.dart';
 import 'discovery_screen.dart';
 import 'diagnostics_screen.dart';
@@ -152,205 +153,259 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
+        padding: const EdgeInsets.all(16),
         children: [
           // ── Connection ──
-          _SectionHeader('Connection'),
-          ListTile(
-            leading: Icon(connected ? Icons.link : Icons.link_off,
-                color: connected ? Colors.green : cs.error),
-            title: Text(connected ? 'Connected to ${widget.status.pcName ?? "PC"}' : 'Disconnected'),
-            subtitle: widget.status.role != null ? Text('Role: ${widget.status.role}') : null,
-            trailing: connected
-                ? TextButton(onPressed: widget.onDisconnect, child: const Text('Disconnect'))
-                : null,
-          ),
-          ListTile(
-            leading: const Icon(Icons.network_check_rounded),
-            title: const Text('Network diagnostics'),
-            subtitle: const Text('LAN, VPN, firewall, and agent ports'),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => DiagnosticsScreen(conn: widget.conn, status: widget.status),
-            )),
-          ),
-          ListTile(
-            leading: const Icon(Icons.refresh_rounded),
-            title: const Text('Reset PC TLS trust (TOFU)'),
-            subtitle: const Text('After PC cert change or reinstall. Next WSS reconnect re-learns fingerprint.'),
-            onTap: _resetTlsTrust,
-          ),
-          const Divider(),
-
-          // ── Security ──
-          _SectionHeader('Security'),
-          SwitchListTile(
-            title: const Text('Auto-lock on disconnect'),
-            subtitle: const Text('Lock PC 10s after connection drops'),
-            value: _autoLock,
-            onChanged: connected ? _saveAutoLock : null,
-          ),
-          const Divider(),
-
-          // ── Trackpad ──
-          _SectionHeader('Trackpad'),
-          ListTile(
-            title: Row(
+          CollapsibleSection(
+            title: 'Connection',
+            icon: Icons.wifi_rounded,
+            storageKey: 'sett_conn',
+            child: Column(
               children: [
-                const Text('Sensitivity'),
-                const Spacer(),
-                Text(
-                  _sensitivity.toStringAsFixed(1),
-                  style: TextStyle(color: cs.primary, fontWeight: FontWeight.w600),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(connected ? Icons.link : Icons.link_off,
+                      color: connected ? Colors.green : cs.error),
+                  title: Text(connected ? 'Connected to ${widget.status.pcName ?? "PC"}' : 'Disconnected'),
+                  subtitle: widget.status.role != null ? Text('Role: ${widget.status.role}') : null,
+                  trailing: connected
+                      ? TextButton(onPressed: widget.onDisconnect, child: const Text('Disconnect'))
+                      : null,
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.network_check_rounded),
+                  title: const Text('Network diagnostics'),
+                  subtitle: const Text('LAN, VPN, firewall, and agent ports'),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => DiagnosticsScreen(conn: widget.conn, status: widget.status),
+                  )),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.refresh_rounded),
+                  title: const Text('Reset PC TLS trust (TOFU)'),
+                  subtitle: const Text('After PC cert change or reinstall. Next WSS reconnect re-learns fingerprint.'),
+                  onTap: _resetTlsTrust,
                 ),
               ],
             ),
-            subtitle: Slider(
-              value: _sensitivity,
-              min: 0.5, max: 3.0,
-              divisions: 25,
-              label: _sensitivity.toStringAsFixed(1),
-              onChanged: (v) => _saveSensitivity(v),
+          ),
+
+          // ── Security ──
+          CollapsibleSection(
+            title: 'Security',
+            icon: Icons.shield_rounded,
+            storageKey: 'sett_sec',
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Auto-lock on disconnect'),
+              subtitle: const Text('Lock PC 10s after connection drops'),
+              value: _autoLock,
+              onChanged: connected ? _saveAutoLock : null,
             ),
           ),
-          SwitchListTile(
-            title: const Text('Invert scroll direction'),
-            value: _invertScroll,
-            onChanged: (v) => _saveInvertScroll(v),
+
+          // ── Trackpad ──
+          CollapsibleSection(
+            title: 'Trackpad & Touch',
+            icon: Icons.touch_app_rounded,
+            storageKey: 'sett_tp',
+            child: Column(
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Row(
+                    children: [
+                      const Text('Sensitivity'),
+                      const Spacer(),
+                      Text(
+                        _sensitivity.toStringAsFixed(1),
+                        style: TextStyle(color: cs.primary, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                  subtitle: Slider(
+                    value: _sensitivity,
+                    min: 0.5,
+                    max: 3.0,
+                    divisions: 25,
+                    label: _sensitivity.toStringAsFixed(1),
+                    onChanged: (v) => _saveSensitivity(v),
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Invert scroll direction'),
+                  value: _invertScroll,
+                  onChanged: (v) => _saveInvertScroll(v),
+                ),
+              ],
+            ),
           ),
-          const Divider(),
 
           // ── Clipboard Sync ──
-          _SectionHeader('Clipboard Sync'),
-          SwitchListTile(
-            title: const Text('Auto-sync clipboard'),
-            subtitle: const Text('Automatically sync clipboard on connect'),
-            value: _autoClipboardSync,
-            onChanged: _saveAutoClipboardSync,
-          ),
-          ListTile(
-            leading: const Icon(Icons.content_paste_go_rounded),
-            title: const Text('Send phone clipboard to PC'),
-            onTap: connected ? () async {
-              final data = await Clipboard.getData('text/plain');
-              if (data?.text != null && data!.text!.isNotEmpty) {
-                widget.conn?.setClipboard(text: data.text!);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Clipboard sent to PC')),
-                  );
-                }
-              }
-            } : null,
-          ),
-          if (connected && widget.conn != null)
-            ValueListenableBuilder<List<String>>(
-              valueListenable: widget.conn!.clipboardHistoryNotifier,
-              builder: (context, history, _) {
-                if (history.isEmpty) return const SizedBox.shrink();
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                      child: Text('Recent Clipboard',
-                          style: TextStyle(fontSize: 12, color: cs.outline)),
-                    ),
-                    ...history.take(5).map((text) => ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.content_copy, size: 16),
-                      title: Text(
-                        text.length > 80 ? '${text.substring(0, 80)}...' : text,
-                        style: const TextStyle(fontSize: 12),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      onTap: () async {
-                        await Clipboard.setData(ClipboardData(text: text));
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Copied to phone clipboard')),
-                          );
+          CollapsibleSection(
+            title: 'Clipboard Sync',
+            icon: Icons.assignment_rounded,
+            storageKey: 'sett_clip',
+            child: Column(
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Auto-sync clipboard'),
+                  subtitle: const Text('Automatically sync clipboard on connect'),
+                  value: _autoClipboardSync,
+                  onChanged: _saveAutoClipboardSync,
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.content_paste_go_rounded),
+                  title: const Text('Send phone clipboard to PC'),
+                  onTap: connected
+                      ? () async {
+                          final data = await Clipboard.getData('text/plain');
+                          if (data?.text != null && data!.text!.isNotEmpty) {
+                            widget.conn?.setClipboard(text: data.text!);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Clipboard sent to PC')),
+                              );
+                            }
+                          }
                         }
-                      },
-                    )),
-                  ],
-                );
-              },
+                      : null,
+                ),
+                if (connected && widget.conn != null)
+                  ValueListenableBuilder<List<String>>(
+                    valueListenable: widget.conn!.clipboardHistoryNotifier,
+                    builder: (context, history, _) {
+                      if (history.isEmpty) return const SizedBox.shrink();
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text('Recent Clipboard',
+                                style: TextStyle(fontSize: 12, color: cs.outline)),
+                          ),
+                          ...history.take(5).map((text) => ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                leading: const Icon(Icons.content_copy, size: 16),
+                                title: Text(
+                                  text.length > 80 ? '${text.substring(0, 80)}...' : text,
+                                  style: const TextStyle(fontSize: 12),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onTap: () async {
+                                  await Clipboard.setData(ClipboardData(text: text));
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Copied to phone clipboard')),
+                                    );
+                                  }
+                                },
+                              )),
+                        ],
+                      );
+                    },
+                  ),
+              ],
             ),
-          const Divider(),
+          ),
 
           // ── Saved Profiles ──
-          _SectionHeader('Saved PCs'),
-          if (_profiles.isEmpty)
-            const ListTile(
-              title: Text('No saved profiles'),
-              subtitle: Text('Connect to a PC to save it here'),
+          CollapsibleSection(
+            title: 'Saved PCs',
+            icon: Icons.computer_rounded,
+            storageKey: 'sett_pcs',
+            child: Column(
+              children: [
+                if (_profiles.isEmpty)
+                  const ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('No saved profiles'),
+                    subtitle: Text('Connect to a PC to save it here'),
+                  ),
+                ...List.generate(_profiles.length, (i) {
+                  final p = _profiles[i];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundColor: cs.secondaryContainer,
+                      radius: 18,
+                      child: Icon(Icons.computer_rounded, size: 18, color: cs.onSecondaryContainer),
+                    ),
+                    title: Text(p.name.isEmpty ? p.ip : p.name),
+                    subtitle: Text('${p.ip}:${p.port}'),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (val) {
+                        if (val == 'rename') _renameProfile(i);
+                        if (val == 'delete') _deleteProfile(i);
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                        const PopupMenuItem(value: 'delete', child: Text('Forget')),
+                      ],
+                    ),
+                  );
+                }),
+              ],
             ),
-          ...List.generate(_profiles.length, (i) {
-            final p = _profiles[i];
-            return ListTile(
-              leading: CircleAvatar(
-                backgroundColor: cs.secondaryContainer,
-                radius: 18,
-                child: Icon(Icons.computer_rounded, size: 18, color: cs.onSecondaryContainer),
-              ),
-              title: Text(p.name.isEmpty ? p.ip : p.name),
-              subtitle: Text('${p.ip}:${p.port}'),
-              trailing: PopupMenuButton<String>(
-                onSelected: (val) {
-                  if (val == 'rename') _renameProfile(i);
-                  if (val == 'delete') _deleteProfile(i);
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                  const PopupMenuItem(value: 'delete', child: Text('Forget')),
-                ],
-              ),
-            );
-          }),
-          const Divider(),
+          ),
 
           // ── Appearance ──
-          _SectionHeader('Appearance'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: ValueListenableBuilder<ThemeMode>(
-              valueListenable: themeCtrl,
-              builder: (context, mode, _) {
-                return SegmentedButton<ThemeMode>(
-                  segments: const [
-                    ButtonSegment(
-                      value: ThemeMode.dark,
-                      label: Text('Dark'),
-                      icon: Icon(Icons.dark_mode_rounded),
-                    ),
-                    ButtonSegment(
-                      value: ThemeMode.light,
-                      label: Text('Light'),
-                      icon: Icon(Icons.light_mode_rounded),
-                    ),
-                    ButtonSegment(
-                      value: ThemeMode.system,
-                      label: Text('System'),
-                      icon: Icon(Icons.settings_suggest_rounded),
-                    ),
-                  ],
-                  selected: {mode},
-                  onSelectionChanged: (newSelection) {
-                    themeCtrl.setMode(newSelection.first);
-                  },
-                );
-              },
+          CollapsibleSection(
+            title: 'Appearance',
+            icon: Icons.palette_rounded,
+            storageKey: 'sett_app',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: ValueListenableBuilder<ThemeMode>(
+                valueListenable: themeCtrl,
+                builder: (context, mode, _) {
+                  return SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: ThemeMode.dark,
+                        label: Text('Dark'),
+                        icon: Icon(Icons.dark_mode_rounded),
+                      ),
+                      ButtonSegment(
+                        value: ThemeMode.light,
+                        label: Text('Light'),
+                        icon: Icon(Icons.light_mode_rounded),
+                      ),
+                      ButtonSegment(
+                        value: ThemeMode.system,
+                        label: Text('System'),
+                        icon: Icon(Icons.settings_suggest_rounded),
+                      ),
+                    ],
+                    selected: {mode},
+                    onSelectionChanged: (newSelection) {
+                      themeCtrl.setMode(newSelection.first);
+                    },
+                  );
+                },
+              ),
             ),
           ),
-          const Divider(),
 
           // ── About ──
-          _SectionHeader('About'),
-          const ListTile(
-            title: Text('Pconnect'),
-            subtitle: Text('v0.2.0 • LAN Remote Control'),
+          CollapsibleSection(
+            title: 'About Pconnect',
+            icon: Icons.info_outline_rounded,
+            storageKey: 'sett_about',
+            child: const ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('Pconnect Agent & Client'),
+              subtitle: Text('v0.2.0 • High-Performance LAN Remote Control'),
+            ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
         ],
       ),
     );

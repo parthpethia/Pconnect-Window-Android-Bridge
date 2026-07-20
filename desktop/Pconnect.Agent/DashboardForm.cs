@@ -23,7 +23,7 @@ internal sealed class DashboardForm : Form
     private Panel? _overviewPage;
     private Label? _serverStatusValue;
     private Label? _connectedDeviceValue;
-    private Label? _ipAddressesValue;
+    private FlowLayoutPanel? _ipChipsPanel;
     private ModernButton? _toggleServerButton;
 
     // Windows Control Tab Controls
@@ -34,6 +34,7 @@ internal sealed class DashboardForm : Form
     // Pairing Tab Controls
     private Panel? _pairingPage;
     private Label? _pinCodeLabel;
+    private ModernProgressBar? _pinCountdownBar;
     private PictureBox? _qrPictureBox;
     private Label? _qrUrlLabel;
 
@@ -53,6 +54,7 @@ internal sealed class DashboardForm : Form
     public DashboardForm(AgentRuntime runtime)
     {
         _runtime = runtime;
+        AutoScaleMode = AutoScaleMode.Dpi;
 
         // Form properties
         Text = _runtime.SafeStartup.IsSafeMode ? "Pconnect Agent (Safe Mode)" : "Pconnect Agent";
@@ -193,24 +195,7 @@ internal sealed class DashboardForm : Form
 
     private static void RelaunchAsAdmin()
     {
-        try
-        {
-            var exePath = Environment.ProcessPath;
-            if (string.IsNullOrEmpty(exePath)) return;
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = exePath,
-                UseShellExecute = true,
-                Verb = "runas"
-            };
-            Process.Start(psi);
-            Application.Exit();
-        }
-        catch
-        {
-            // UAC prompt dismissed or cancelled
-        }
+        AdminRelaunchHelper.RelaunchAsAdmin();
     }
 
     private void SwitchTab(int index)
@@ -322,7 +307,16 @@ internal sealed class DashboardForm : Form
         _connectedDeviceValue = new Label { Text = "None", Left = 150, Top = 90, AutoSize = true, Font = ThemeColors.BoldBodyFont, ForeColor = ThemeColors.TextPrimary };
 
         var ipLabel = new Label { Text = "LAN IP Addresses:", Left = 20, Top = 122, AutoSize = true, ForeColor = ThemeColors.TextSecondary };
-        _ipAddressesValue = new Label { Text = "127.0.0.1", Left = 150, Top = 122, AutoSize = true, Font = ThemeColors.BodyFont, ForeColor = ThemeColors.Primary };
+        _ipChipsPanel = new FlowLayoutPanel
+        {
+            Left = 150,
+            Top = 118,
+            Width = cardWidth - 330,
+            Height = 36,
+            AutoScroll = true,
+            WrapContents = false,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
 
         _toggleServerButton = new ModernButton
         {
@@ -341,7 +335,7 @@ internal sealed class DashboardForm : Form
         statusCard.Controls.Add(deviceLabel);
         statusCard.Controls.Add(_connectedDeviceValue);
         statusCard.Controls.Add(ipLabel);
-        statusCard.Controls.Add(_ipAddressesValue);
+        statusCard.Controls.Add(_ipChipsPanel);
         statusCard.Controls.Add(_toggleServerButton);
 
         _overviewPage.Controls.Add(statusCard);
@@ -571,13 +565,22 @@ internal sealed class DashboardForm : Form
             AutoSize = true,
         };
 
+        _pinCountdownBar = new ModernProgressBar
+        {
+            Left = 25,
+            Top = 140,
+            Width = 330,
+            Label = "PIN Rotation Countdown",
+            Value = 100,
+        };
+
         _qrUrlLabel = new Label
         {
             Text = "WebSocket URL: ws://...",
             Font = ThemeColors.BodyFont,
             ForeColor = ThemeColors.TextSecondary,
             Left = 25,
-            Top = 155,
+            Top = 188,
             MaximumSize = new Size(400, 0),
             AutoSize = true,
         };
@@ -599,7 +602,7 @@ internal sealed class DashboardForm : Form
             Style = ModernButtonStyle.Primary,
             Left = 25,
             Top = 235,
-            Width = 190,
+            Width = 170,
             Height = 38,
         };
         copyUrlBtn.Click += (_, _) => CopyWebSocketUrl();
@@ -608,9 +611,9 @@ internal sealed class DashboardForm : Form
         {
             Text = "Copy PIN",
             Style = ModernButtonStyle.Secondary,
-            Left = 225,
+            Left = 205,
             Top = 235,
-            Width = 130,
+            Width = 100,
             Height = 38,
         };
         copyPinBtn.Click += (_, _) =>
@@ -619,12 +622,29 @@ internal sealed class DashboardForm : Form
             if (!string.IsNullOrEmpty(code)) Clipboard.SetText(code);
         };
 
+        var regenPinBtn = new ModernButton
+        {
+            Text = "Regen PIN",
+            Style = ModernButtonStyle.Outline,
+            Left = 315,
+            Top = 235,
+            Width = 110,
+            Height = 38,
+        };
+        regenPinBtn.Click += (_, _) =>
+        {
+            _runtime.Pairing.RotateCode();
+            RefreshPairingCode();
+        };
+
         qrCard.Controls.Add(pinTitle);
         qrCard.Controls.Add(_pinCodeLabel);
+        qrCard.Controls.Add(_pinCountdownBar);
         qrCard.Controls.Add(_qrUrlLabel);
         qrCard.Controls.Add(_qrPictureBox);
         qrCard.Controls.Add(copyUrlBtn);
         qrCard.Controls.Add(copyPinBtn);
+        qrCard.Controls.Add(regenPinBtn);
 
         _pairingPage.Controls.Add(qrCard);
     }
@@ -634,6 +654,15 @@ internal sealed class DashboardForm : Form
         var code = _runtime.Pairing.CurrentCode;
         if (_pinCodeLabel != null) _pinCodeLabel.Text = code;
         if (_qrUrlLabel != null) _qrUrlLabel.Text = $"WebSocket URL: {_runtime.GetLikelyWebSocketUrl() ?? "Unavailable"}";
+
+        if (_pinCountdownBar != null)
+        {
+            var elapsedSec = (DateTime.UtcNow - _runtime.Pairing.LastRotatedUtc).TotalSeconds;
+            var remainingSec = Math.Max(0, 300 - (int)elapsedSec);
+            var pct = Math.Clamp((int)((remainingSec / 300.0) * 100), 0, 100);
+            _pinCountdownBar.Value = pct;
+            _pinCountdownBar.Label = $"PIN Rotation Countdown ({remainingSec}s remaining)";
+        }
 
         if (_qrPictureBox != null)
         {
@@ -671,6 +700,80 @@ internal sealed class DashboardForm : Form
                 // QR generation fallback
             }
         }
+    }
+
+    private void UpdateUi()
+    {
+        if (IsDisposed) return;
+
+        bool running = _runtime.IsServerRunning;
+        if (_serverStatusValue != null)
+        {
+            _serverStatusValue.Text = running ? "Active (Listening)" : "Stopped";
+            _serverStatusValue.ForeColor = running ? ThemeColors.Success : ThemeColors.Danger;
+        }
+
+        if (_toggleServerButton != null)
+        {
+            _toggleServerButton.Text = running ? "Stop Server" : "Start Server";
+            _toggleServerButton.Style = running ? ModernButtonStyle.Danger : ModernButtonStyle.Success;
+        }
+
+        if (_connectedDeviceValue != null)
+        {
+            _connectedDeviceValue.Text = _runtime.ConnectedDeviceDisplay;
+        }
+
+        if (_ipChipsPanel != null)
+        {
+            _ipChipsPanel.Controls.Clear();
+            var ips = _runtime.GetLanIpv4Candidates();
+            if (ips.Count == 0)
+            {
+                var noIpLabel = new Label
+                {
+                    Text = "No LAN IPv4 detected",
+                    ForeColor = ThemeColors.TextMuted,
+                    AutoSize = true,
+                    Margin = new Padding(0, 4, 0, 0),
+                };
+                _ipChipsPanel.Controls.Add(noIpLabel);
+            }
+            else
+            {
+                foreach (var ip in ips)
+                {
+                    var chip = new ModernButton
+                    {
+                        Text = ip,
+                        Style = ModernButtonStyle.Secondary,
+                        Height = 28,
+                        AutoSize = true,
+                        Margin = new Padding(0, 0, 6, 0),
+                    };
+                    var targetIp = ip;
+                    chip.Click += (_, _) =>
+                    {
+                        Clipboard.SetText(targetIp);
+                        MessageBox.Show($"Copied {targetIp} to clipboard!", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    };
+                    _ipChipsPanel.Controls.Add(chip);
+                }
+            }
+        }
+    }
+
+    private void CopyWebSocketUrl()
+    {
+        var url = _runtime.GetLikelyWebSocketUrl();
+        if (url == null)
+        {
+            MessageBox.Show("Could not determine an IP address.", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        Clipboard.SetText(url);
+        MessageBox.Show($"Copied to clipboard:\n{url}", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
     #endregion
 
@@ -873,47 +976,5 @@ internal sealed class DashboardForm : Form
         if (IsDisposed) return;
         try { BeginInvoke(UpdateUi); }
         catch { }
-    }
-
-    private void UpdateUi()
-    {
-        if (IsDisposed) return;
-
-        bool running = _runtime.IsServerRunning;
-        if (_serverStatusValue != null)
-        {
-            _serverStatusValue.Text = running ? "Active (Listening)" : "Stopped";
-            _serverStatusValue.ForeColor = running ? ThemeColors.Success : ThemeColors.Danger;
-        }
-
-        if (_toggleServerButton != null)
-        {
-            _toggleServerButton.Text = running ? "Stop Server" : "Start Server";
-            _toggleServerButton.Style = running ? ModernButtonStyle.Danger : ModernButtonStyle.Success;
-        }
-
-        if (_connectedDeviceValue != null)
-        {
-            _connectedDeviceValue.Text = _runtime.ConnectedDeviceDisplay;
-        }
-
-        if (_ipAddressesValue != null)
-        {
-            var ips = _runtime.GetLanIpv4Candidates();
-            _ipAddressesValue.Text = ips.Count > 0 ? string.Join(", ", ips) : "No LAN IPv4 detected";
-        }
-    }
-
-    private void CopyWebSocketUrl()
-    {
-        var url = _runtime.GetLikelyWebSocketUrl();
-        if (url == null)
-        {
-            MessageBox.Show("Could not determine an IP address.", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        Clipboard.SetText(url);
-        MessageBox.Show($"Copied to clipboard:\n{url}", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 }

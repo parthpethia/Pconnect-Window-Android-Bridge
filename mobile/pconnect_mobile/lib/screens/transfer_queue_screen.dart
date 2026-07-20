@@ -141,134 +141,195 @@ class _TransferRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final statusColor = _getStatusColor(context, item.state);
 
-    return Semantics(
-      label: item.semanticsLabel,
-      child: Card(
-        margin: const EdgeInsets.only(bottom: 12),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    item.isDownload ? Icons.download_rounded : Icons.upload_rounded,
-                    color: statusColor,
-                    size: 22,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.filename,
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (item.suffixedFilename != null)
-                          Text(
-                            'Saved as ${item.suffixedFilename} (file already existed)',
-                            style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.w500),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Semantics(
-                    label: 'Status: ${item.state.name}',
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: statusColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        item.state.name.toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: statusColor,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-
-              if (item.state == TransferState.active) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: item.progress > 0 ? item.progress : null,
-                    minHeight: 6,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final cardWidget = Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Stack(
+                  alignment: Alignment.center,
                   children: [
-                    Text(
-                      '${item.progressStr} • ${item.speedStr}',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                    ),
-                    Text(
-                      'ETA ${item.etaStr}',
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                    if (item.state == TransferState.active)
+                      SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: CircularProgressIndicator(
+                          value: item.progress > 0 ? item.progress : null,
+                          strokeWidth: 3.0,
+                          color: statusColor,
+                          backgroundColor: statusColor.withValues(alpha: 0.2),
+                        ),
+                      ),
+                    Icon(
+                      item.isDownload ? Icons.download_rounded : Icons.upload_rounded,
+                      color: statusColor,
+                      size: 20,
                     ),
                   ],
                 ),
-              ],
-
-              if (item.state == TransferState.failed && item.error != null) ...[
-                Text(
-                  'Error: ${item.error}',
-                  style: TextStyle(fontSize: 12, color: cs.error),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.filename,
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (item.suffixedFilename != null)
+                        Text(
+                          'Saved as ${item.suffixedFilename} (file already existed)',
+                          style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.w500),
+                        ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 6),
+                Semantics(
+                  label: 'Status: ${item.state.name}',
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      item.state.name.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
+                      ),
+                    ),
+                  ),
+                ),
               ],
+            ),
+            const SizedBox(height: 10),
 
-              // Row action buttons
+            if (item.state == TransferState.active) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: item.progress > 0 ? item.progress : null,
+                  minHeight: 6,
+                ),
+              ),
+              const SizedBox(height: 6),
               Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  if (item.state == TransferState.failed)
-                    Semantics(
-                      button: true,
-                      label: 'Retry transfer for ${item.filename}',
-                      child: TextButton.icon(
-                        icon: const Icon(Icons.refresh_rounded, size: 16),
-                        label: const Text('Retry'),
-                        onPressed: () {
-                          // Retry transfer trigger
-                          conn.uploadFile(item.filename, onProgress: (_) {}, resumeTransferId: item.id);
-                        },
-                      ),
-                    ),
-                  if (item.state == TransferState.active || item.state == TransferState.queued)
-                    Semantics(
-                      button: true,
-                      label: 'Cancel transfer for ${item.filename}',
-                      child: TextButton.icon(
-                        icon: Icon(Icons.cancel_outlined, size: 16, color: cs.error),
-                        label: Text('Cancel', style: TextStyle(color: cs.error)),
-                        onPressed: () => conn.abortTransfer(item.id),
-                      ),
-                    ),
-                  if (item.state == TransferState.completed)
-                    TextButton.icon(
-                      icon: const Icon(Icons.check_circle_outline_rounded, size: 16, color: Colors.green),
-                      label: const Text('Completed', style: TextStyle(color: Colors.green)),
-                      onPressed: () {},
-                    ),
+                  Text(
+                    '${item.progressStr} • ${item.speedStr}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                  ),
+                  Text(
+                    'ETA ${item.etaStr}',
+                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
                 ],
               ),
             ],
-          ),
+
+            if (item.state == TransferState.failed && item.error != null) ...[
+              Text(
+                'Error: ${item.error}',
+                style: TextStyle(fontSize: 12, color: cs.error),
+              ),
+              const SizedBox(height: 6),
+            ],
+
+            // Row action buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (item.state == TransferState.failed)
+                  Semantics(
+                    button: true,
+                    label: 'Retry transfer for ${item.filename}',
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('Retry'),
+                      onPressed: () {
+                        conn.uploadFile(item.filename, onProgress: (_) {}, resumeTransferId: item.id);
+                      },
+                    ),
+                  ),
+                if (item.state == TransferState.active || item.state == TransferState.queued)
+                  Semantics(
+                    button: true,
+                    label: 'Cancel transfer for ${item.filename}',
+                    child: TextButton.icon(
+                      icon: Icon(Icons.cancel_outlined, size: 16, color: cs.error),
+                      label: Text('Cancel', style: TextStyle(color: cs.error)),
+                      onPressed: () => conn.abortTransfer(item.id),
+                    ),
+                  ),
+                if (item.state == TransferState.completed)
+                  TextButton.icon(
+                    icon: const Icon(Icons.check_circle_outline_rounded, size: 16, color: Colors.green),
+                    label: const Text('Completed', style: TextStyle(color: Colors.green)),
+                    onPressed: () {},
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
     );
+
+    // If completed or failed, return standard card without dismissible gestures
+    if (item.state == TransferState.completed || item.state == TransferState.failed) {
+      return Semantics(label: item.semanticsLabel, child: cardWidget);
+    }
+
+    return Dismissible(
+      key: Key(item.id),
+      direction: DismissDirection.horizontal,
+      background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 20),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.pause_circle_filled_rounded, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Pause', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+      secondaryBackground: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: cs.error.withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Text('Cancel', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            SizedBox(width: 8),
+            Icon(Icons.delete_forever_rounded, color: Colors.white),
+          ],
+        ),
+      ),
+      onDismissed: (direction) {
+        if (direction == DismissDirection.endToStart) {
+          conn.abortTransfer(item.id);
+        }
+      },
+      child: Semantics(label: item.semanticsLabel, child: cardWidget),
+    );
   }
 }
+
+

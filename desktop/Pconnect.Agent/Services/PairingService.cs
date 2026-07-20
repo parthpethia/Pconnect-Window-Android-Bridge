@@ -14,9 +14,16 @@ internal sealed class PairingService : IDisposable
     private const int MaxAttemptsBeforeLockout = 10;
     private const int LockoutSeconds = 60;
 
+    private DateTime _lastRotatedUtc = DateTime.UtcNow;
+
     public string CurrentCode
     {
         get { lock (_gate) { return _currentCode; } }
+    }
+
+    public DateTime LastRotatedUtc
+    {
+        get { lock (_gate) { return _lastRotatedUtc; } }
     }
 
     public PairingService()
@@ -24,6 +31,8 @@ internal sealed class PairingService : IDisposable
         // Rotate every 5 minutes by default.
         _timer = new System.Threading.Timer(_ => Rotate(), null, Timeout.Infinite, Timeout.Infinite);
     }
+
+    public void RotateCode() => Rotate();
 
     public void StartRotation(TimeSpan? interval = null)
     {
@@ -69,6 +78,7 @@ internal sealed class PairingService : IDisposable
         lock (_gate)
         {
             _currentCode = GenerateCode();
+            _lastRotatedUtc = DateTime.UtcNow;
             // Reset failure counter on code rotation so legitimate users aren't locked out forever
             _consecutiveFailures = 0;
             _lockoutUntilUtc = DateTime.MinValue;

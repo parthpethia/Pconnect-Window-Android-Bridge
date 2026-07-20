@@ -830,6 +830,7 @@ class _FullscreenRemote extends StatefulWidget {
 
 class _FullscreenRemoteState extends State<_FullscreenRemote> {
   late int _mode;
+  bool _showCrosshair = false;
 
   @override
   void initState() {
@@ -874,7 +875,7 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
           body: SafeArea(
             child: Row(
               children: [
-                // ── Left: Live preview ──
+                // ── Left: Live preview with Crosshair Overlay ──
                 Expanded(
                   flex: 6,
                   child: Container(
@@ -884,41 +885,73 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
                       border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.3)),
                     ),
                     clipBehavior: Clip.antiAlias,
-                    child: InteractiveViewer(
-                      minScale: 1.0,
-                      maxScale: 6.0,
-                      child: ValueListenableBuilder<RTCVideoRenderer?>(
-                        valueListenable: conn.webrtcRendererNotifier,
-                        builder: (context, renderer, _) {
-                          if (renderer != null) {
-                            return ScreenPreviewWebRtc(renderer: renderer);
-                          }
-                          return ValueListenableBuilder<Uint8List?>(
-                            valueListenable: conn.screenFrameNotifier,
-                            builder: (_, frame, __) {
-                              if (frame == null) {
-                                return Center(child: CircularProgressIndicator(color: cs.primary));
+                    child: Stack(
+                      children: [
+                        InteractiveViewer(
+                          minScale: 1.0,
+                          maxScale: 6.0,
+                          child: ValueListenableBuilder<RTCVideoRenderer?>(
+                            valueListenable: conn.webrtcRendererNotifier,
+                            builder: (context, renderer, _) {
+                              if (renderer != null) {
+                                return ScreenPreviewWebRtc(renderer: renderer);
                               }
-                              return Image.memory(
-                                frame,
-                                gaplessPlayback: true,
-                                fit: BoxFit.contain,
-                                filterQuality: widget.quality == ScreenQuality.best
-                                    ? FilterQuality.high
-                                    : FilterQuality.medium,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Container(
-                                    color: Colors.grey.shade900,
-                                    child: const Center(
-                                      child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
-                                    ),
+                              return ValueListenableBuilder<Uint8List?>(
+                                valueListenable: conn.screenFrameNotifier,
+                                builder: (_, frame, __) {
+                                  if (frame == null) {
+                                    return Center(child: CircularProgressIndicator(color: cs.primary));
+                                  }
+                                  return Image.memory(
+                                    frame,
+                                    gaplessPlayback: true,
+                                    fit: BoxFit.contain,
+                                    filterQuality: widget.quality == ScreenQuality.best
+                                        ? FilterQuality.high
+                                        : FilterQuality.medium,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        color: Colors.grey.shade900,
+                                        child: const Center(
+                                          child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                                        ),
+                                      );
+                                    },
                                   );
                                 },
                               );
                             },
-                          );
-                        },
-                      ),
+                          ),
+                        ),
+                        if (_showCrosshair)
+                          IgnorePointer(
+                            child: Center(
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Container(
+                                    width: 28,
+                                    height: 28,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.redAccent, width: 1.5),
+                                    ),
+                                  ),
+                                  Container(width: 36, height: 1.5, color: Colors.redAccent.withValues(alpha: 0.8)),
+                                  Container(width: 1.5, height: 36, color: Colors.redAccent.withValues(alpha: 0.8)),
+                                  Container(
+                                    width: 4,
+                                    height: 4,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.redAccent,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -930,7 +963,7 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
                     padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
                     child: Column(
                       children: [
-                        // Mode toggle + exit
+                        // Mode toggle + Crosshair + Exit
                         Padding(
                           padding: const EdgeInsets.fromLTRB(4, 8, 8, 4),
                           child: Row(
@@ -939,6 +972,15 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
                               const SizedBox(width: 4),
                               _miniChip('Keyboard', _mode == 1, () => setState(() => _mode = 1), cs),
                               const Spacer(),
+                              IconButton(
+                                icon: Icon(
+                                  _showCrosshair ? Icons.center_focus_strong : Icons.center_focus_weak,
+                                  color: _showCrosshair ? Colors.redAccent : Colors.white60,
+                                  size: 20,
+                                ),
+                                tooltip: 'Precision Crosshair',
+                                onPressed: () => setState(() => _showCrosshair = !_showCrosshair),
+                              ),
                               if (hasError || !connected)
                                 IconButton(
                                   icon: const Icon(Icons.error_outline_rounded, color: Colors.redAccent),

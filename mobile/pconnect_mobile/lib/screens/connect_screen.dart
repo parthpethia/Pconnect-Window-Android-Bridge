@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/connection.dart';
@@ -343,41 +344,11 @@ class _ConnectScreenState extends State<ConnectScreen> with SingleTickerProvider
                                   style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.65)),
                                 ),
                                 const SizedBox(height: 16),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _codeController,
-                                        keyboardType: TextInputType.number,
-                                        maxLength: 6,
-                                        style: const TextStyle(color: Colors.white, letterSpacing: 4.0, fontWeight: FontWeight.bold),
-                                        decoration: InputDecoration(
-                                          counterText: '',
-                                          hintText: '000000',
-                                          hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
-                                          border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          filled: true,
-                                          fillColor: Colors.white.withValues(alpha: 0.04),
-                                        ),
-                                        onSubmitted: (_) => _submitCode(),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    SizedBox(
-                                      height: 52,
-                                      child: FilledButton(
-                                        onPressed: _submitCode,
-                                        style: FilledButton.styleFrom(
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                        ),
-                                        child: const Text('Pair'),
-                                      ),
-                                    ),
-                                  ],
+                                _SegmentedPinInput(
+                                  onCompleted: (code) {
+                                    _codeController.text = code;
+                                    _submitCode();
+                                  },
                                 ),
                               ],
                             ),
@@ -975,6 +946,105 @@ class _ModernQrScanPageState extends State<_ModernQrScanPage> {
                         ),
                       ],
                     ),
+    );
+  }
+}
+
+// ── 6-Box Segmented PIN Input Widget ──
+class _SegmentedPinInput extends StatefulWidget {
+  final ValueChanged<String> onCompleted;
+  const _SegmentedPinInput({required this.onCompleted});
+
+  @override
+  State<_SegmentedPinInput> createState() => _SegmentedPinInputState();
+}
+
+class _SegmentedPinInputState extends State<_SegmentedPinInput> {
+  final List<TextEditingController> _controllers =
+      List.generate(6, (_) => TextEditingController());
+  final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
+
+  @override
+  void dispose() {
+    for (var c in _controllers) {
+      c.dispose();
+    }
+    for (var f in _focusNodes) {
+      f.dispose();
+    }
+    super.dispose();
+  }
+
+  void _onChanged(int index, String value) {
+    if (value.isNotEmpty) {
+      HapticFeedback.selectionClick();
+      if (value.length > 1) {
+        // Handle paste
+        final digits = value.replaceAll(RegExp(r'\D'), '');
+        for (int i = 0; i < 6 && i < digits.length; i++) {
+          _controllers[i].text = digits[i];
+        }
+        _checkAndSubmit();
+        return;
+      }
+      if (index < 5) {
+        _focusNodes[index + 1].requestFocus();
+      } else {
+        _focusNodes[index].unfocus();
+        _checkAndSubmit();
+      }
+    } else {
+      if (index > 0) {
+        _focusNodes[index - 1].requestFocus();
+      }
+    }
+  }
+
+  void _checkAndSubmit() {
+    final code = _controllers.map((c) => c.text).join();
+    if (code.length == 6) {
+      widget.onCompleted(code);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: List.generate(6, (i) {
+        return SizedBox(
+          width: 44,
+          height: 54,
+          child: TextField(
+            controller: _controllers[i],
+            focusNode: _focusNodes[i],
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            maxLength: 1,
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            decoration: InputDecoration(
+              counterText: '',
+              contentPadding: EdgeInsets.zero,
+              filled: true,
+              fillColor: const Color(0xFF2C2C3A),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: theme.colorScheme.primary, width: 2.0),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+              ),
+            ),
+            onChanged: (v) => _onChanged(i, v),
+          ),
+        );
+      }),
     );
   }
 }

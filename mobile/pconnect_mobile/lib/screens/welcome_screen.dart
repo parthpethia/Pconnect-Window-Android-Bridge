@@ -264,7 +264,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                   const SizedBox(height: 16),
 
-                  // ── Indicator Dots ──
+                  // ── Indicator Worm Pills ──
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: List.generate(
@@ -277,14 +277,23 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOutCubic,
                           margin: const EdgeInsets.symmetric(horizontal: 4.0),
-                          height: 7,
-                          width: _currentFeatureIndex == index ? 24 : 7,
+                          height: 8,
+                          width: _currentFeatureIndex == index ? 28 : 8,
                           decoration: BoxDecoration(
                             color: _currentFeatureIndex == index
                                 ? cs.primary
-                                : Colors.white24,
+                                : Colors.white.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(4),
+                            boxShadow: _currentFeatureIndex == index
+                                ? [
+                                    BoxShadow(
+                                      color: cs.primary.withValues(alpha: 0.5),
+                                      blurRadius: 8,
+                                    ),
+                                  ]
+                                : null,
                           ),
                         ),
                       ),
@@ -293,55 +302,83 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                   const Spacer(flex: 3),
 
-                  // ── Premium CTA Action Button ──
-                  Container(
-                    width: double.infinity,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(30),
-                      gradient: LinearGradient(
-                        colors: [
-                          cs.primary,
-                          const Color(0xFF8E2DE2),
-                        ],
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: cs.primary.withValues(alpha: 0.4),
-                          blurRadius: 18,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: ElevatedButton(
-                      onPressed: widget.onGetStarted,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        foregroundColor: Colors.white,
-                        shadowColor: Colors.transparent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'GET STARTED',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.5,
+                  // ── Action Buttons Row (Ghost Skip + Get Started + Scan QR CTA) ──
+                  Row(
+                    children: [
+                      // Ghost Skip Button
+                      Expanded(
+                        flex: 2,
+                        child: OutlinedButton(
+                          onPressed: widget.onGetStarted,
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 56),
+                            foregroundColor: Colors.white70,
+                            side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(28),
                             ),
                           ),
-                          SizedBox(width: 10),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            size: 20,
+                          child: const Text(
+                            'SKIP',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 1.0,
+                            ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      // Primary Get Started CTA Button
+                      Expanded(
+                        flex: 3,
+                        child: Container(
+                          height: 56,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(28),
+                            gradient: LinearGradient(
+                              colors: [
+                                cs.primary,
+                                const Color(0xFF8E2DE2),
+                              ],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: cs.primary.withValues(alpha: 0.4),
+                                blurRadius: 18,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: ElevatedButton(
+                            onPressed: widget.onGetStarted,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.transparent,
+                              foregroundColor: Colors.white,
+                              shadowColor: Colors.transparent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(28),
+                              ),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  'START',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                                SizedBox(width: 6),
+                                Icon(Icons.arrow_forward_rounded, size: 18),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                 ],

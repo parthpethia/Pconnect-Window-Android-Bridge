@@ -9,6 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'app_launcher_screen.dart';
 
+import '../constants/theme_tokens.dart';
+import '../widgets/glass_card.dart';
+import '../widgets/collapsible_section.dart';
 import '../services/connection.dart';
 import '../main.dart';
 import '../widgets/screen_preview_webrtc.dart';
@@ -210,122 +213,181 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           // ── Connection status bar ──
           _StatusBar(status: widget.status, onTap: widget.onOpenDiscovery),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // ── Quick actions 2x2 ──
-          Text('Quick Actions', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 2.5,
-            children: [
-              _QuickAction(
-                icon: Icons.lock_rounded,
-                label: 'Lock PC',
-                enabled: connected,
-                onTap: () => conn?.lockPc(),
-              ),
-              _QuickAction(
-                icon: Icons.content_paste_rounded,
-                label: 'Clipboard',
-                enabled: connected,
-                onTap: () async {
-                  final data = await Clipboard.getData('text/plain');
-                  if (data?.text != null && data!.text!.isNotEmpty) {
-                    conn?.setClipboard(text: data.text!);
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Sent to PC clipboard')),
-                      );
+          CollapsibleSection(
+            title: 'Quick Actions',
+            icon: Icons.flash_on_rounded,
+            storageKey: 'home_quick_actions',
+            child: GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 2.4,
+              children: [
+                _QuickAction(
+                  icon: Icons.lock_rounded,
+                  label: 'Lock PC',
+                  enabled: connected,
+                  tintColor: AppColors.danger,
+                  onTap: () => conn?.lockPc(),
+                ),
+                _QuickAction(
+                  icon: Icons.content_paste_rounded,
+                  label: 'Clipboard',
+                  enabled: connected,
+                  tintColor: AppColors.info,
+                  onTap: () async {
+                    final data = await Clipboard.getData('text/plain');
+                    if (data?.text != null && data!.text!.isNotEmpty) {
+                      conn?.setClipboard(text: data.text!);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Sent to PC clipboard')),
+                        );
+                      }
                     }
-                  }
-                },
-              ),
-              _QuickAction(
-                icon: Icons.volume_off_rounded,
-                label: 'Mute',
-                enabled: connected,
-                onTap: () => conn?.mediaKey('mute'),
-              ),
-              _QuickAction(
-                icon: Icons.upload_file_rounded,
-                label: 'Send Files',
-                enabled: connected,
-                onTap: () => _pickAndUploadFiles(context),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          // ── Media bar ──
-          Text('Media', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      IconButton.filledTonal(
-                        onPressed: connected ? () => conn?.mediaKey('prev') : null,
-                        icon: const Icon(Icons.skip_previous_rounded),
-                      ),
-                      IconButton.filled(
-                        onPressed: connected ? () => conn?.mediaKey('play_pause') : null,
-                        icon: const Icon(Icons.play_arrow_rounded),
-                        iconSize: 32,
-                      ),
-                      IconButton.filledTonal(
-                        onPressed: connected ? () => conn?.mediaKey('next') : null,
-                        icon: const Icon(Icons.skip_next_rounded),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      const Icon(Icons.volume_down_rounded, size: 20),
-                      Expanded(
-                        child: Slider(
-                          value: _volume,
-                          min: 0, max: 100,
-                          onChanged: connected ? (v) {
-                            setState(() => _volume = v);
-                            _sendVolume(v);
-                          } : null,
-                        ),
-                      ),
-                      const Icon(Icons.volume_up_rounded, size: 20),
-                      const SizedBox(width: 4),
-                      SizedBox(width: 32, child: Text('${_volume.round()}', textAlign: TextAlign.center)),
-                    ],
-                  ),
-                ],
-              ),
+                  },
+                ),
+                _QuickAction(
+                  icon: Icons.volume_off_rounded,
+                  label: 'Mute',
+                  enabled: connected,
+                  tintColor: AppColors.warning,
+                  onTap: () => conn?.mediaKey('mute'),
+                ),
+                _QuickAction(
+                  icon: Icons.upload_file_rounded,
+                  label: 'Send Files',
+                  enabled: connected,
+                  tintColor: AppColors.primary,
+                  onTap: () => _pickAndUploadFiles(context),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 20),
+
+          // ── Media bar ──
+          CollapsibleSection(
+            title: 'Media Controls',
+            icon: Icons.play_circle_outline_rounded,
+            storageKey: 'home_media',
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.borderSubtle),
+                      ),
+                      child: IconButton(
+                        onPressed: connected ? () => conn?.mediaKey('prev') : null,
+                        icon: Icon(Icons.skip_previous_rounded, color: connected ? AppColors.textPrimary : AppColors.textDisabled),
+                      ),
+                    ),
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            AppColors.primary,
+                            const Color(0xFF8E2DE2),
+                          ],
+                        ),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primaryGlow,
+                            blurRadius: 16,
+                          ),
+                        ],
+                      ),
+                      child: IconButton(
+                        onPressed: connected ? () => conn?.mediaKey('play_pause') : null,
+                        icon: const Icon(Icons.play_arrow_rounded, color: Colors.white),
+                        iconSize: 32,
+                      ),
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.borderSubtle),
+                      ),
+                      child: IconButton(
+                        onPressed: connected ? () => conn?.mediaKey('next') : null,
+                        icon: Icon(Icons.skip_next_rounded, color: connected ? AppColors.textPrimary : AppColors.textDisabled),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Icon(Icons.volume_down_rounded, size: 20),
+                    Expanded(
+                      child: Slider(
+                        value: _volume,
+                        min: 0,
+                        max: 100,
+                        activeColor: AppColors.primary,
+                        onChanged: connected
+                            ? (v) {
+                                setState(() => _volume = v);
+                                _sendVolume(v);
+                              }
+                            : null,
+                      ),
+                    ),
+                    const Icon(Icons.volume_up_rounded, size: 20),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${_volume.round()}%',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
 
           // ── Screen preview + Trackpad ──
-          _ScreenPreviewWithTrackpad(
-            conn: conn,
-            connected: connected,
-            screenPreviewOn: _screenPreviewOn,
-            onToggle: (v) {
-              setState(() => _screenPreviewOn = v);
-              if (v) {
-                conn?.startScreenCapture(intervalMs: 1000, width: 720, quality: 70);
-              } else {
-                conn?.stopScreenCapture();
-              }
-            },
+          CollapsibleSection(
+            title: 'Screen Preview & Trackpad',
+            icon: Icons.touch_app_rounded,
+            storageKey: 'home_trackpad',
+            child: _ScreenPreviewWithTrackpad(
+              conn: conn,
+              connected: connected,
+              screenPreviewOn: _screenPreviewOn,
+              onToggle: (v) {
+                setState(() => _screenPreviewOn = v);
+                if (v) {
+                  conn?.startScreenCapture(intervalMs: 1000, width: 720, quality: 70);
+                } else {
+                  conn?.stopScreenCapture();
+                }
+              },
+            ),
           ),
-          const SizedBox(height: 20),
 
           // ── Pinned Apps row ──
           if (connected && conn != null)
@@ -333,62 +395,57 @@ class _HomeScreenState extends State<HomeScreen> {
               valueListenable: conn.appListNotifier,
               builder: (context, apps, _) {
                 if (apps.isEmpty) return const SizedBox.shrink();
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text('Apps', style: Theme.of(context).textTheme.titleMedium),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => AppLauncherScreen(conn: conn)),
-                          ),
-                          child: const Text('View All'),
-                        ),
-                      ],
+                return CollapsibleSection(
+                  title: 'Windows Apps',
+                  icon: Icons.apps_rounded,
+                  storageKey: 'home_apps',
+                  trailing: TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => AppLauncherScreen(conn: conn)),
                     ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 80,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: apps.length > 20 ? 20 : apps.length,
-                        itemBuilder: (context, i) {
-                          final app = apps[i];
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 12),
-                            child: GestureDetector(
-                              onTap: () => conn.launchAppByPath(app.exePath),
-                              child: Column(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 24,
-                                    backgroundImage: app.iconBase64 != null
-                                        ? MemoryImage(base64Decode(app.iconBase64!))
-                                        : null,
-                                    child: app.iconBase64 == null
-                                        ? const Icon(Icons.apps) : null,
+                    child: Text('View All (${apps.length})', style: AppTypography.label),
+                  ),
+                  child: SizedBox(
+                    height: 84,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: apps.length > 20 ? 20 : apps.length,
+                      itemBuilder: (context, i) {
+                        final app = apps[i];
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 14),
+                          child: GestureDetector(
+                            onTap: () => conn.launchAppByPath(app.exePath),
+                            child: Column(
+                              children: [
+                                CircleAvatar(
+                                  radius: 24,
+                                  backgroundColor: AppColors.primaryTint,
+                                  backgroundImage: app.iconBase64 != null
+                                      ? MemoryImage(base64Decode(app.iconBase64!))
+                                      : null,
+                                  child: app.iconBase64 == null
+                                      ? const Icon(Icons.apps_rounded, color: AppColors.primary)
+                                      : null,
+                                ),
+                                const SizedBox(height: 6),
+                                SizedBox(
+                                  width: 58,
+                                  child: Text(
+                                    app.name,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTypography.caption,
                                   ),
-                                  const SizedBox(height: 4),
-                                  SizedBox(
-                                    width: 56,
-                                    child: Text(
-                                      app.name,
-                                      textAlign: TextAlign.center,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 10),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
                     ),
-                  ],
+                  ),
                 );
               },
             ),
@@ -403,6 +460,85 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// ── Breathing Glow Dot ──
+class _BreathingGlowDot extends StatefulWidget {
+  final bool active;
+  final Color color;
+  const _BreathingGlowDot({required this.active, required this.color});
+
+  @override
+  State<_BreathingGlowDot> createState() => _BreathingGlowDotState();
+}
+
+class _BreathingGlowDotState extends State<_BreathingGlowDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _pulse = Tween<double>(begin: 1.0, end: 1.8).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+    if (widget.active) _ctrl.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(_BreathingGlowDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active != oldWidget.active) {
+      if (widget.active) {
+        _ctrl.repeat(reverse: true);
+      } else {
+        _ctrl.stop();
+        _ctrl.reset();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, _) {
+        final scale = widget.active ? _pulse.value : 1.0;
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 14 * scale,
+              height: 14 * scale,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.color.withValues(alpha: widget.active ? 0.35 / scale : 0.0),
+              ),
+            ),
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.color,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 // ── Status bar widget ──
 class _StatusBar extends StatelessWidget {
   final ConnectionStatus status;
@@ -411,52 +547,49 @@ class _StatusBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final connected = status.connected;
-    return GestureDetector(
+    final statusColor = connected ? AppColors.success : AppColors.danger;
+    final bgTint = connected ? AppColors.successTint : AppColors.dangerTint;
+
+    return GlassCard(
       onTap: onTap,
-      child: Card(
-        color: connected ? cs.primaryContainer : cs.errorContainer,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Icon(
-                connected ? Icons.circle : Icons.circle_outlined,
-                size: 12,
-                color: connected ? Colors.green : cs.error,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      connected ? 'Connected' : 'Disconnected',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: connected ? cs.onPrimaryContainer : cs.onErrorContainer,
-                      ),
-                    ),
-                    if (status.pcName != null)
-                      Text(status.pcName!, style: TextStyle(
-                        fontSize: 12,
-                        color: connected ? cs.onPrimaryContainer.withValues(alpha: 0.7) : cs.onErrorContainer.withValues(alpha: 0.7),
-                      )),
-                    if (status.role != null)
-                      Text('Role: ${status.role}', style: TextStyle(
-                        fontSize: 11,
-                        color: connected ? cs.onPrimaryContainer.withValues(alpha: 0.5) : cs.onErrorContainer.withValues(alpha: 0.5),
-                      )),
-                    if (status.error != null)
-                      Text(status.error!, style: TextStyle(fontSize: 11, color: cs.error)),
-                  ],
+      backgroundColor: bgTint,
+      borderColor: statusColor.withValues(alpha: 0.3),
+      child: Row(
+        children: [
+          _BreathingGlowDot(active: connected, color: statusColor),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  connected ? 'Connected' : 'Disconnected',
+                  style: AppTypography.title.copyWith(
+                    fontSize: 15,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
-              ),
-              Icon(Icons.chevron_right, color: connected ? cs.onPrimaryContainer : cs.onErrorContainer),
-            ],
+                if (status.pcName != null)
+                  Text(
+                    status.pcName!,
+                    style: AppTypography.caption.copyWith(color: AppColors.textSecondary),
+                  ),
+                if (status.role != null)
+                  Text(
+                    'Role: ${status.role}',
+                    style: AppTypography.caption.copyWith(color: AppColors.textDisabled),
+                  ),
+                if (status.error != null)
+                  Text(
+                    status.error!,
+                    style: AppTypography.caption.copyWith(color: AppColors.danger),
+                  ),
+              ],
+            ),
           ),
-        ),
+          Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary),
+        ],
       ),
     );
   }
@@ -467,22 +600,45 @@ class _QuickAction extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool enabled;
+  final Color tintColor;
   final VoidCallback? onTap;
-  const _QuickAction({required this.icon, required this.label, required this.enabled, this.onTap});
+
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    this.tintColor = AppColors.primary,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return FilledButton.tonal(
-      onPressed: enabled ? onTap : null,
-      style: FilledButton.styleFrom(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
+    return GlassCard(
+      onTap: enabled ? onTap : null,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      backgroundColor: enabled ? tintColor.withValues(alpha: 0.16) : AppColors.bgElevated1,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 20),
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: enabled ? tintColor.withValues(alpha: 0.25) : Colors.transparent,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 18, color: enabled ? tintColor : AppColors.textDisabled),
+          ),
           const SizedBox(width: 8),
-          Text(label),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTypography.label.copyWith(
+                color: enabled ? AppColors.textPrimary : AppColors.textDisabled,
+              ),
+            ),
+          ),
         ],
       ),
     );
