@@ -33,6 +33,11 @@ internal static class CommandIntegrity
 
     public static bool TryVerifyMac(byte[] key, int seq, string canon, string? macB64)
     {
+        return TryVerifyMac(key, 0, seq, canon, macB64);
+    }
+
+    public static bool TryVerifyMac(byte[] key, long epoch, int seq, string canon, string? macB64)
+    {
         if (macB64 is null || macB64.Length == 0)
         {
             return false;
@@ -49,7 +54,8 @@ internal static class CommandIntegrity
         }
 
         using var h = new HMACSHA256(key);
-        var expected = h.ComputeHash(Encoding.UTF8.GetBytes($"{seq}|{canon}"));
+        // Include epoch in MAC payload: "{epoch}|{seq}|{canon}"
+        var expected = h.ComputeHash(Encoding.UTF8.GetBytes($"{epoch}|{seq}|{canon}"));
         return expected.Length == macBytes.Length && CryptographicOperations.FixedTimeEquals(expected, macBytes);
     }
 }

@@ -49,7 +49,15 @@ internal class ModernButton : Button
         Font = ThemeColors.BoldBodyFont;
         Cursor = Cursors.Hand;
         Height = 36;
-        Padding = new Padding(12, 0, 12, 0);
+        Padding = new Padding(14, 0, 14, 0);
+    }
+
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        var textSize = TextRenderer.MeasureText(Text, Font);
+        int width = textSize.Width + Padding.Left + Padding.Right + 8;
+        int height = Math.Max(Height, textSize.Height + 10);
+        return new Size(width, height);
     }
 
     protected override void OnMouseEnter(EventArgs e)

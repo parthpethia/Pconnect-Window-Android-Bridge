@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using Pconnect.Agent.Resilience;
 
 namespace Pconnect.Agent.Services;
 
@@ -131,7 +132,6 @@ internal sealed class ScreenCaptureDxgi : IDisposable
     private static readonly Guid IID_IDXGIOutput1 = new("00cddea8-939b-4b83-a340-a685226666cc");
     private static readonly Guid IID_ID3D11Texture2D = new("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
 
-    // vtable indices
     private const int IDXGIDevice_GetAdapter_Index = 7;
     private const int IDXGIAdapter_EnumOutputs_Index = 7;
     private const int IDXGIOutput1_DuplicateOutput_Index = 22;
@@ -170,6 +170,8 @@ internal sealed class ScreenCaptureDxgi : IDisposable
     private uint _width = 0;
     private uint _height = 0;
     private readonly object _lock = new();
+
+    private readonly TimeWindowedCircuitBreaker _circuitBreaker = new(thresholdCount: 5, timeWindow: TimeSpan.FromSeconds(10), halfOpenTimeout: TimeSpan.FromSeconds(10));
 
     internal static bool ForceInitializeSuccess { get; set; }
 
@@ -362,6 +364,7 @@ internal sealed class ScreenCaptureDxgi : IDisposable
             _height = desc.ModeDesc.Height;
 
             CreateStagingTexture();
+            _circuitBreaker.RecordSuccess();
         }
     }
 
@@ -390,11 +393,18 @@ internal sealed class ScreenCaptureDxgi : IDisposable
 
     public DxgiFrame? AcquireNextFrame(int timeoutMs)
     {
+        if (_circuitBreaker.IsOpen) return null;
+
         lock (_lock)
         {
             if (_duplication == IntPtr.Zero)
             {
-                Initialize();
+                try { Initialize(); }
+                catch
+                {
+                    _circuitBreaker.RecordFailure();
+                    return null;
+                }
             }
 
             var acquireNextFrame = Marshal.GetDelegateForFunctionPointer<AcquireNextFrameDelegate>(
@@ -407,7 +417,7 @@ internal sealed class ScreenCaptureDxgi : IDisposable
             }
             if (hr != 0) // e.g. DXGI_ERROR_ACCESS_LOST
             {
-                // Re-initialize and try once more or return null
+                _circuitBreaker.RecordFailure();
                 try
                 {
                     Initialize();
@@ -418,6 +428,8 @@ internal sealed class ScreenCaptureDxgi : IDisposable
                 }
                 return null;
             }
+
+            _circuitBreaker.RecordSuccess();
 
             Guid iidTexture2d = IID_ID3D11Texture2D;
             int res = Marshal.QueryInterface(resource, ref iidTexture2d, out IntPtr texture);
@@ -502,7 +514,7 @@ internal sealed class ScreenCaptureDxgi : IDisposable
             var map = Marshal.GetDelegateForFunctionPointer<MapDelegate>(
                 GetVtableFunc(_context, ID3D11DeviceContext_Map_Index));
 
-            int hr = map(_context, _stagingTexture, 0, 1, 0, out var mapped); // 1 = D3D11_MAP_READ
+            int hr = map(_context, _stagingTexture, 0, 1, 0, out var mapped);
             if (hr != 0) return null;
 
             try
@@ -512,8 +524,6 @@ internal sealed class ScreenCaptureDxgi : IDisposable
                 byte[] raw = new byte[byteCount];
                 Marshal.Copy(mapped.pData, raw, 0, byteCount);
 
-                // If RowPitch matches Width * 4, we can return raw directly,
-                // otherwise we copy row by row to make a contiguous buffer of exactly Width * Height * 4 bytes.
                 int expectedPitch = (int)(_width * 4);
                 if (pitch == expectedPitch)
                 {

@@ -1,27 +1,42 @@
 using System.Management;
 using System.Runtime.InteropServices;
+using Pconnect.Agent.Resilience;
 
 namespace Pconnect.Agent.Services;
 
 internal static class SystemBrightness
 {
-    // Works for many laptop internal displays via WMI. External monitors may not support this.
+    private static readonly ConsecutiveCircuitBreaker Breaker = new(threshold: 3, halfOpenTimeout: TimeSpan.FromSeconds(5));
+
     public static bool TrySetPercent(int level)
     {
+        if (Breaker.IsOpen) return false;
+
         try
         {
-            level = Math.Clamp(level, 0, 100);
-            // 1) WMI method (typical for internal laptop panels)
-            if (TrySetViaWmi(level))
+            var task = Task.Run(() =>
             {
-                return true;
-            }
+                var clamped = Math.Clamp(level, 0, 100);
+                if (TrySetViaWmi(clamped)) return true;
+                return TrySetViaDdcCi(clamped);
+            });
 
-            // 2) DDC/CI fallback (many external monitors that support DDC/CI)
-            return TrySetViaDdcCi(level);
+            if (task.Wait(1500))
+            {
+                var res = task.Result;
+                if (res) Breaker.RecordSuccess();
+                else Breaker.RecordFailure();
+                return res;
+            }
+            else
+            {
+                Breaker.RecordFailure();
+                return false;
+            }
         }
         catch
         {
+            Breaker.RecordFailure();
             return false;
         }
     }
@@ -41,8 +56,6 @@ internal static class SystemBrightness
             using var results = searcher.Get();
             foreach (ManagementObject method in results)
             {
-                // Params: timeout, brightness (0-100)
-                // Different drivers interpret timeout differently; try a few safe values.
                 foreach (var timeout in new object[] { 0u, 1u, 100u, 500u })
                 {
                     try
@@ -55,10 +68,8 @@ internal static class SystemBrightness
                         // try next
                     }
                 }
-
                 return false;
             }
-
             return false;
         }
         catch
@@ -79,7 +90,7 @@ internal static class SystemBrightness
                 {
                     if (!GetNumberOfPhysicalMonitorsFromHMONITOR(hMonitor, out var count) || count == 0)
                     {
-                        return true; // continue
+                        return true;
                     }
 
                     var physical = new PHYSICAL_MONITOR[count];
@@ -97,7 +108,6 @@ internal static class SystemBrightness
 
                             if (GetMonitorBrightness(handle, out _, out _, out _))
                             {
-                                // DDC/CI brightness is also 0-100
                                 if (SetMonitorBrightness(handle, (uint)level))
                                 {
                                     anySucceeded = true;
@@ -112,10 +122,10 @@ internal static class SystemBrightness
                 }
                 catch
                 {
-                    // ignore, continue enumerating
+                    // ignore
                 }
 
-                return true; // continue
+                return true;
             }
 
             EnumDisplayMonitors(nint.Zero, nint.Zero, MonitorEnumCallback, nint.Zero);

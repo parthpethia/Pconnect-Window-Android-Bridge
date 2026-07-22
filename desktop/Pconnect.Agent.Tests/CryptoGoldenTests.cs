@@ -43,8 +43,8 @@ public class CryptoGoldenTests
         try
         {
             using var h = new HMACSHA256(key!);
-            var macB64 = Convert.ToBase64String(h.ComputeHash(Encoding.UTF8.GetBytes("1|shutdown|x")));
-            Assert.True(CommandIntegrity.TryVerifyMac(key!, 1, "shutdown|x", macB64));
+            var macB64 = Convert.ToBase64String(h.ComputeHash(Encoding.UTF8.GetBytes("100|1|shutdown|x")));
+            Assert.True(CommandIntegrity.TryVerifyMac(key!, 100, 1, "shutdown|x", macB64));
         }
         finally
         {

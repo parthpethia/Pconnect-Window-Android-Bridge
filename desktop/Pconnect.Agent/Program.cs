@@ -29,7 +29,17 @@ internal static class Program
                 using var parent = System.Diagnostics.Process.GetProcessById(relaunchFromPid);
                 if (!parent.HasExited)
                 {
-                    parent.WaitForExit(3000);
+                    if (!parent.WaitForExit(3000))
+                    {
+                        try
+                        {
+                            parent.Kill(entireProcessTree: true);
+                        }
+                        catch
+                        {
+                            // Process might be terminating
+                        }
+                    }
                 }
             }
             catch
@@ -57,13 +67,18 @@ internal static class Program
         else if (!createdNew && relaunchFromPid > 0)
         {
             bool acquired = false;
-            try
+            for (int attempt = 0; attempt < 5; attempt++)
             {
-                acquired = singleInstanceMutex.WaitOne(3000);
-            }
-            catch (AbandonedMutexException)
-            {
-                acquired = true;
+                try
+                {
+                    acquired = singleInstanceMutex.WaitOne(1000);
+                    if (acquired) break;
+                }
+                catch (AbandonedMutexException)
+                {
+                    acquired = true;
+                    break;
+                }
             }
 
             if (!acquired)

@@ -457,23 +457,20 @@ internal sealed class DashboardForm : Form
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
 
-        int btnGap = 14;
-        int btnWidth = (cardWidth - 40 - (3 * btnGap)) / 4;
-
-        var lockBtn = new ModernButton { Text = "Lock PC", Style = ModernButtonStyle.Secondary, Left = 20, Top = 58, Width = btnWidth, Height = 38 };
+        var lockBtn = new ModernButton { Text = "Lock PC", Style = ModernButtonStyle.Secondary, Top = 58, Height = 38 };
         lockBtn.Click += (_, _) => _runtime.Pc.Lock();
 
-        var sleepBtn = new ModernButton { Text = "Sleep PC", Style = ModernButtonStyle.Secondary, Left = 20 + btnWidth + btnGap, Top = 58, Width = btnWidth, Height = 38 };
+        var sleepBtn = new ModernButton { Text = "Sleep PC", Style = ModernButtonStyle.Secondary, Top = 58, Height = 38 };
         sleepBtn.Click += (_, _) => _runtime.Pc.Sleep();
 
-        var restartBtn = new ModernButton { Text = "Restart PC", Style = ModernButtonStyle.Outline, Left = 20 + (2 * (btnWidth + btnGap)), Top = 58, Width = btnWidth, Height = 38 };
+        var restartBtn = new ModernButton { Text = "Restart PC", Style = ModernButtonStyle.Outline, Top = 58, Height = 38 };
         restartBtn.Click += (_, _) =>
         {
             if (MessageBox.Show("Are you sure you want to restart your PC?", "Pconnect", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 _runtime.Pc.Restart();
         };
 
-        var shutdownBtn = new ModernButton { Text = "Shutdown PC", Style = ModernButtonStyle.Danger, Left = 20 + (3 * (btnWidth + btnGap)), Top = 58, Width = btnWidth, Height = 38 };
+        var shutdownBtn = new ModernButton { Text = "Shutdown PC", Style = ModernButtonStyle.Danger, Top = 58, Height = 38 };
         shutdownBtn.Click += (_, _) =>
         {
             if (MessageBox.Show("Are you sure you want to shutdown your PC?", "Pconnect", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
@@ -484,6 +481,19 @@ internal sealed class DashboardForm : Form
         powerCard.Controls.Add(sleepBtn);
         powerCard.Controls.Add(restartBtn);
         powerCard.Controls.Add(shutdownBtn);
+
+        void LayoutPowerCard()
+        {
+            int pGap = 14;
+            int pWidth = Math.Max(80, (powerCard.Width - 40 - (3 * pGap)) / 4);
+            lockBtn.Left = 20; lockBtn.Width = pWidth;
+            sleepBtn.Left = 20 + pWidth + pGap; sleepBtn.Width = pWidth;
+            restartBtn.Left = 20 + (2 * (pWidth + pGap)); restartBtn.Width = pWidth;
+            shutdownBtn.Left = 20 + (3 * (pWidth + pGap)); shutdownBtn.Width = pWidth;
+        }
+
+        powerCard.Resize += (_, _) => LayoutPowerCard();
+        LayoutPowerCard();
 
         _controlPage.Controls.Add(powerCard);
         top += 127;
@@ -500,22 +510,19 @@ internal sealed class DashboardForm : Form
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
 
-        int appGap = 12;
-        int appWidth = (cardWidth - 40 - (4 * appGap)) / 5;
-
-        var taskmgrBtn = new ModernButton { Text = "Task Manager", Style = ModernButtonStyle.Secondary, Left = 20, Top = 58, Width = appWidth, Height = 38 };
+        var taskmgrBtn = new ModernButton { Text = "Task Manager", Style = ModernButtonStyle.Secondary, Top = 58, Height = 38 };
         taskmgrBtn.Click += (_, _) => _runtime.Pc.OpenTaskManager();
 
-        var desktopBtn = new ModernButton { Text = "Show Desktop", Style = ModernButtonStyle.Secondary, Left = 20 + appWidth + appGap, Top = 58, Width = appWidth, Height = 38 };
+        var desktopBtn = new ModernButton { Text = "Show Desktop", Style = ModernButtonStyle.Secondary, Top = 58, Height = 38 };
         desktopBtn.Click += (_, _) => _runtime.Pc.ShowDesktop();
 
-        var taskviewBtn = new ModernButton { Text = "Task View", Style = ModernButtonStyle.Secondary, Left = 20 + (2 * (appWidth + appGap)), Top = 58, Width = appWidth, Height = 38 };
+        var taskviewBtn = new ModernButton { Text = "Task View", Style = ModernButtonStyle.Secondary, Top = 58, Height = 38 };
         taskviewBtn.Click += (_, _) => _runtime.Pc.TaskView();
 
-        var cmdBtn = new ModernButton { Text = "CMD", Style = ModernButtonStyle.Secondary, Left = 20 + (3 * (appWidth + appGap)), Top = 58, Width = appWidth, Height = 38 };
+        var cmdBtn = new ModernButton { Text = "CMD", Style = ModernButtonStyle.Secondary, Top = 58, Height = 38 };
         cmdBtn.Click += (_, _) => _runtime.Pc.Launch("cmd.exe", null);
 
-        var explorerBtn = new ModernButton { Text = "Explorer", Style = ModernButtonStyle.Secondary, Left = 20 + (4 * (appWidth + appGap)), Top = 58, Width = appWidth, Height = 38 };
+        var explorerBtn = new ModernButton { Text = "Explorer", Style = ModernButtonStyle.Secondary, Top = 58, Height = 38 };
         explorerBtn.Click += (_, _) => _runtime.Pc.Launch("explorer.exe", null);
 
         appsCard.Controls.Add(taskmgrBtn);
@@ -523,6 +530,20 @@ internal sealed class DashboardForm : Form
         appsCard.Controls.Add(taskviewBtn);
         appsCard.Controls.Add(cmdBtn);
         appsCard.Controls.Add(explorerBtn);
+
+        void LayoutAppsCard()
+        {
+            int aGap = 12;
+            int aWidth = Math.Max(70, (appsCard.Width - 40 - (4 * aGap)) / 5);
+            taskmgrBtn.Left = 20; taskmgrBtn.Width = aWidth;
+            desktopBtn.Left = 20 + aWidth + aGap; desktopBtn.Width = aWidth;
+            taskviewBtn.Left = 20 + (2 * (aWidth + aGap)); taskviewBtn.Width = aWidth;
+            cmdBtn.Left = 20 + (3 * (aWidth + aGap)); cmdBtn.Width = aWidth;
+            explorerBtn.Left = 20 + (4 * (aWidth + aGap)); explorerBtn.Width = aWidth;
+        }
+
+        appsCard.Resize += (_, _) => LayoutAppsCard();
+        LayoutAppsCard();
 
         _controlPage.Controls.Add(appsCard);
     }

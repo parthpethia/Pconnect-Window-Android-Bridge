@@ -1,5 +1,7 @@
 using System.IO.Pipes;
 using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 
 namespace Pconnect.Agent.Services;
@@ -38,12 +40,7 @@ internal static class SingleInstanceIpc
                 NamedPipeServerStream? server = null;
                 try
                 {
-                    server = new NamedPipeServerStream(
-                        PipeName,
-                        PipeDirection.In,
-                        maxNumberOfServerInstances: 1,
-                        PipeTransmissionMode.Message,
-                        PipeOptions.Asynchronous);
+                    server = CreateServerStream();
 
                     await server.WaitForConnectionAsync(ct);
 
@@ -76,4 +73,42 @@ internal static class SingleInstanceIpc
             }
         }, ct);
     }
+
+    private static NamedPipeServerStream CreateServerStream()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var pipeSecurity = new PipeSecurity();
+            pipeSecurity.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+                PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
+                AccessControlType.Allow));
+            var currentIdentity = WindowsIdentity.GetCurrent();
+            if (currentIdentity.User != null)
+            {
+                pipeSecurity.AddAccessRule(new PipeAccessRule(
+                    currentIdentity.User,
+                    PipeAccessRights.FullControl,
+                    AccessControlType.Allow));
+            }
+
+            return NamedPipeServerStreamAcl.Create(
+                PipeName,
+                PipeDirection.In,
+                1,
+                PipeTransmissionMode.Message,
+                PipeOptions.Asynchronous,
+                inBufferSize: 0,
+                outBufferSize: 0,
+                pipeSecurity);
+        }
+
+        return new NamedPipeServerStream(
+            PipeName,
+            PipeDirection.In,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Message,
+            PipeOptions.Asynchronous);
+    }
 }
+

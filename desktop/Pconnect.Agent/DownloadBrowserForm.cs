@@ -114,7 +114,9 @@ internal sealed class DownloadBrowserForm : Form
     private void OnItemDoubleClick(object? sender, EventArgs e)
     {
         if (_listView.SelectedItems.Count == 0) return;
-        var tag = (dynamic)_listView.SelectedItems[0].Tag;
+        var tagObj = _listView.SelectedItems[0].Tag;
+        if (tagObj is null) return;
+        var tag = (dynamic)tagObj;
         string path = tag.path;
         bool isDir = tag.isDir;
 

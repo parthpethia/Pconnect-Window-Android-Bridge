@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO;
+using System.Reflection;
 using System.Runtime.Versioning;
 
 namespace Pconnect.Agent.Services;
@@ -13,10 +15,32 @@ internal static class AdminRelaunchHelper
             var exePath = Environment.ProcessPath;
             if (string.IsNullOrEmpty(exePath)) return;
 
+            string fileName = exePath;
+            string arguments;
+
+            var exeName = Path.GetFileName(exePath);
+            if (exeName.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase) ||
+                exeName.Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+            {
+                var entryAssembly = Assembly.GetEntryAssembly()?.Location;
+                if (!string.IsNullOrEmpty(entryAssembly) && File.Exists(entryAssembly))
+                {
+                    arguments = $"exec \"{entryAssembly}\" --relaunch-from-pid {Environment.ProcessId}";
+                }
+                else
+                {
+                    arguments = $"--relaunch-from-pid {Environment.ProcessId}";
+                }
+            }
+            else
+            {
+                arguments = $"--relaunch-from-pid {Environment.ProcessId}";
+            }
+
             var psi = new ProcessStartInfo
             {
-                FileName = exePath,
-                Arguments = $"--relaunch-from-pid {Environment.ProcessId}",
+                FileName = fileName,
+                Arguments = arguments,
                 UseShellExecute = true,
                 Verb = "runas"
             };
@@ -30,3 +54,4 @@ internal static class AdminRelaunchHelper
         }
     }
 }
+

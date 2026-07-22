@@ -7,6 +7,7 @@ internal sealed class PairingService : IDisposable
     private readonly object _gate = new();
     private readonly System.Threading.Timer _timer;
     private string _currentCode = GenerateCode();
+    private string? _previousCode;
 
     // Rate limiting: track consecutive failures
     private int _consecutiveFailures;
@@ -19,6 +20,11 @@ internal sealed class PairingService : IDisposable
     public string CurrentCode
     {
         get { lock (_gate) { return _currentCode; } }
+    }
+
+    public string? PreviousCode
+    {
+        get { lock (_gate) { return _previousCode; } }
     }
 
     public DateTime LastRotatedUtc
@@ -47,6 +53,8 @@ internal sealed class PairingService : IDisposable
             return false;
         }
 
+        var trimmed = code.Trim();
+
         lock (_gate)
         {
             // Enforce lockout period after too many failed attempts
@@ -55,7 +63,9 @@ internal sealed class PairingService : IDisposable
                 return false;
             }
 
-            if (string.Equals(_currentCode, code.Trim(), StringComparison.Ordinal))
+            // 2-window validity check: allow current PIN or previous rotated PIN
+            if (string.Equals(_currentCode, trimmed, StringComparison.Ordinal) ||
+                (_previousCode != null && string.Equals(_previousCode, trimmed, StringComparison.Ordinal)))
             {
                 _consecutiveFailures = 0;
                 return true;
@@ -77,9 +87,9 @@ internal sealed class PairingService : IDisposable
     {
         lock (_gate)
         {
+            _previousCode = _currentCode;
             _currentCode = GenerateCode();
             _lastRotatedUtc = DateTime.UtcNow;
-            // Reset failure counter on code rotation so legitimate users aren't locked out forever
             _consecutiveFailures = 0;
             _lockoutUntilUtc = DateTime.MinValue;
         }
@@ -87,11 +97,9 @@ internal sealed class PairingService : IDisposable
 
     private static string GenerateCode()
     {
-        // 6-digit numeric code
         var value = RandomNumberGenerator.GetInt32(0, 1_000_000);
         return value.ToString("D6");
     }
 
     public void Dispose() => _timer.Dispose();
 }
-

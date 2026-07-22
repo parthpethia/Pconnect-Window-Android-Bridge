@@ -84,16 +84,7 @@ public sealed class WebRtcFallbackTests
             var cts = new CancellationTokenSource();
 
             // Queue hello message
-            socket.EnqueueInput(JsonSerializer.Serialize(new
-            {
-                v = 1,
-                type = "hello",
-                clientVersion = "1.0.0",
-                proto = 2,
-                deviceId = "test-device-id",
-                token = token,
-                screenStreamModes = new[] { "webrtc-v1" }
-            }));
+            socket.EnqueueInput("{\"v\":1,\"type\":\"hello\",\"clientVersion\":\"1.0.0\",\"proto\":2,\"deviceId\":\"test-device-id\",\"token\":\"" + token + "\",\"screenStreamModes\":[\"webrtc-v1\"]}");
 
             // Queue webrtcOffer message (camelCase wire format)
             socket.EnqueueInput(JsonSerializer.Serialize(new
@@ -155,16 +146,7 @@ public sealed class WebRtcFallbackTests
             var cts = new CancellationTokenSource();
 
             // Queue hello message
-            socket.EnqueueInput(JsonSerializer.Serialize(new
-            {
-                v = 1,
-                type = "hello",
-                clientVersion = "1.0.0",
-                proto = 2,
-                deviceId = "test-device-id",
-                token = token,
-                screenStreamModes = new[] { "webrtc-v1" }
-            }));
+            socket.EnqueueInput("{\"v\":1,\"type\":\"hello\",\"clientVersion\":\"1.0.0\",\"proto\":2,\"deviceId\":\"test-device-id\",\"token\":\"" + token + "\",\"screenStreamModes\":[\"webrtc-v1\"]}");
 
             // Queue webrtcOffer message (camelCase wire format)
             socket.EnqueueInput(JsonSerializer.Serialize(new

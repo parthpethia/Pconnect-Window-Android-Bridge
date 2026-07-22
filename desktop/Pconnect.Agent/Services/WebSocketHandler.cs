@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Pconnect.Agent.Resilience;
 
 namespace Pconnect.Agent.Services;
 
@@ -84,6 +85,7 @@ internal sealed class WebSocketHandler
         NotificationListenerService? notificationListener = null;
         System.Threading.Timer? autoLockTimer = null;
         var sessionNonceBytes = RandomNumberGenerator.GetBytes(16);
+        long sessionEpoch = DateTime.UtcNow.Ticks;
         byte[]? integrityKey = null;
         var lastCmdSeq = 0;
         IReadOnlyList<string>? lastClientScreenStreamModes = null;
@@ -267,6 +269,7 @@ internal sealed class WebSocketHandler
             type = "welcome",
             pcName = Environment.MachineName,
             sessionNonce = Convert.ToHexString(sessionNonceBytes),
+            sessionEpoch = sessionEpoch,
             wssPort = AgentRuntime.DefaultWssPort,
         }, ct);
 
@@ -294,6 +297,14 @@ internal sealed class WebSocketHandler
                 {
                     if (typeKey == "hello")
                     {
+                        var proto = msg.GetIntOrDefault("proto", 1);
+                        if (proto > 2)
+                        {
+                            var envelope = StructuredErrorEnvelope.Mismatch("Incompatible major protocol version");
+                            await SendAsync(ws, envelope, ct);
+                            continue;
+                        }
+
                         if (!PassesClientPolicy(msg, out var policyErr))
                         {
                             await SendAsync(ws, new { v = 1, type = "error", message = policyErr }, ct);
@@ -313,7 +324,7 @@ internal sealed class WebSocketHandler
                         {
                             authed = true;
                             deviceRole = _paired.GetRole(deviceId);
-                            var proto = msg.GetIntOrDefault("proto", 1);
+                            proto = msg.GetIntOrDefault("proto", 1);
                             if (proto >= 2)
                             {
                                 integrityKey = CommandIntegrity.TryDeriveIntegrityKey(token, sessionNonceBytes);
@@ -480,9 +491,10 @@ internal sealed class WebSocketHandler
                         return false;
                     }
 
-                    if (!CommandIntegrity.TryVerifyMac(integrityKey, seq, canon, mac))
+                    if (!CommandIntegrity.TryVerifyMac(integrityKey, sessionEpoch, seq, canon, mac))
                     {
-                        err = "Invalid cmdMac";
+                        _auditLog.Log(deviceName, $"security:macRejected:epoch={sessionEpoch},seq={seq}");
+                        err = "Invalid cmdMac or session replay detected";
                         return false;
                     }
 
@@ -663,12 +675,19 @@ internal sealed class WebSocketHandler
                         var password = msg.GetStringOrNull("password") ?? msg.GetStringOrNull("pin");
                         if (string.IsNullOrWhiteSpace(password))
                         {
-                            await SendAsync(ws, new { v = 1, type = "error", message = "Shutdown password required" }, ct);
+                            await SendAsync(ws, StructuredErrorEnvelope.Unauthorized("Shutdown PIN required"), ct);
                             break;
                         }
-                        if (!string.Equals(password.Trim(), _shutdownPassword, StringComparison.Ordinal))
+
+                        bool isRateLimited = false;
+                        string? pinErr = null;
+                        if (deviceId == null || !_paired.VerifyShutdownPin(deviceId, password.Trim(), out isRateLimited, out pinErr))
                         {
-                            await SendAsync(ws, new { v = 1, type = "error", message = "Invalid shutdown password" }, ct);
+                            _auditLog.Log(deviceName, $"security:shutdownPinRefused:deviceId={deviceId}");
+                            var errEnv = isRateLimited
+                                ? StructuredErrorEnvelope.RateLimited(pinErr ?? "Rate limited")
+                                : StructuredErrorEnvelope.Unauthorized(pinErr ?? "Invalid shutdown PIN");
+                            await SendAsync(ws, errEnv, ct);
                             break;
                         }
 
