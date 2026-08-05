@@ -9,7 +9,7 @@ export default function Footer() {
       <div className="footer-grid">
         <div className="footer-brand">
           <div className="brand-link">
-            <img src="/logo.svg" alt="Pconnect Logo" className="brand-logo" />
+            <img src="/logo-pconnect.png" alt="Pconnect Logo" className="brand-logo" />
             <span className="brand-name">Pconnect</span>
           </div>
           <p>

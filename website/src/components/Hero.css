@@ -144,11 +144,17 @@
 .win-dot.yellow { background: #ffbd2e; }
 .win-dot.green { background: #27c93f; }
 
+.app-header-logo {
+  height: 22px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 0 6px rgba(108, 92, 231, 0.5));
+}
+
 .pc-window-title {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-muted);
-  margin-left: 8px;
 }
 
 .pc-screen-content {

@@ -60,7 +60,10 @@ export default function Hero() {
                 <div className="win-dot red"></div>
                 <div className="win-dot yellow"></div>
                 <div className="win-dot green"></div>
-                <span className="pc-window-title">Pconnect Agent v1.0.0 (Windows)</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <img src="/logo-pconnect.png" alt="Pconnect Logo" className="app-header-logo" />
+                  <span className="pc-window-title">Pconnect Agent v1.0.0 (Windows)</span>
+                </div>
               </div>
 
               <div className="pc-screen-content">
@@ -93,8 +96,8 @@ export default function Hero() {
             <div className="phone-floating-mockup">
               <div className="phone-screen">
                 <div className="phone-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <Smartphone size={14} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <img src="/logo-pconnect.png" alt="Pconnect Logo" className="app-header-logo" />
                     <span>Pconnect Mobile</span>
                   </div>
                   <span style={{ color: '#10b981' }}>Connected</span>

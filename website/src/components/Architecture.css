@@ -1,19 +1,86 @@
 .arch-section {
   background: var(--bg-secondary);
   border-top: 1px solid var(--border-color);
+  padding: 80px 0;
+}
+
+.protocol-sequence-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 32px;
+  margin-bottom: 40px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.sequence-title {
+  font-size: 1.2rem;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.sequence-steps-grid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.seq-step {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  transition: border-color 0.2s ease;
+}
+
+.seq-step:hover {
+  border-color: var(--accent-cyan);
+}
+
+.step-num {
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--accent-light);
+  opacity: 0.6;
+}
+
+.seq-step h4 {
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.seq-step p {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.seq-arrow {
+  color: var(--accent-cyan);
+  opacity: 0.6;
 }
 
 .arch-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 36px;
-  align-items: center;
+  gap: 32px;
+  align-items: stretch;
 }
 
 .arch-card {
-  background: var(--bg-glass-card);
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: 18px;
   padding: 28px;
   display: flex;
   flex-direction: column;
@@ -21,7 +88,7 @@
 }
 
 .arch-card h3 {
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   font-weight: 700;
   color: var(--accent-light);
   display: flex;
@@ -31,22 +98,28 @@
 
 .port-badge-list {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-top: 8px;
+  margin-top: auto;
 }
 
 .port-badge {
-  background: var(--bg-primary);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  padding: 8px 14px;
-  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   color: var(--accent-cyan);
 }
 
 @media (max-width: 868px) {
+  .sequence-steps-grid {
+    flex-direction: column;
+  }
+  .seq-arrow {
+    transform: rotate(90deg);
+  }
   .arch-grid {
     grid-template-columns: 1fr;
   }
