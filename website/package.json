@@ -11,6 +11,8 @@
   "dependencies": {
     "framer-motion": "^12.4.0",
     "lucide-react": "^0.475.0",
+    "peerjs": "^1.5.5",
+    "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.5"

@@ -30,13 +30,13 @@ export default function Navbar() {
     >
       <div className="navbar__inner">
         <a href="#" className="navbar__logo">
-          <motion.span
-            className="navbar__logo-icon"
-            whileHover={{ scale: 1.1, rotate: 5 }}
+          <motion.img
+            src="/logo-pconnect.png"
+            alt="Pconnect Logo"
+            className="navbar__logo-img"
+            whileHover={{ scale: 1.1, rotate: -3 }}
             whileTap={{ scale: 0.95 }}
-          >
-            P
-          </motion.span>
+          />
           <span className="navbar__logo-text">Pconnect</span>
         </a>
 

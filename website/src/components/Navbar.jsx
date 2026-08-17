@@ -13,7 +13,7 @@ export default function Navbar({ theme, toggleTheme }) {
     <header className="navbar glass-panel">
       <div className="navbar-inner">
         <Link to="/" className="brand-link" onClick={() => setMobileMenuOpen(false)}>
-          <img src="/logo.svg" alt="Pconnect Logo" className="brand-logo" />
+          <img src="/logo-pconnect.png" alt="Pconnect Logo" className="brand-logo" />
           <span className="brand-name">Pconnect</span>
         </Link>
 
@@ -22,6 +22,7 @@ export default function Navbar({ theme, toggleTheme }) {
             <>
               <li><a href="#how-it-works" className="nav-link" onClick={() => setMobileMenuOpen(false)}>How It Works</a></li>
               <li><a href="#demo" className="nav-link" onClick={() => setMobileMenuOpen(false)}>Live Demo</a></li>
+              <li><a href="#showcase" className="nav-link" onClick={() => setMobileMenuOpen(false)}>App Gallery</a></li>
               <li><a href="#features" className="nav-link" onClick={() => setMobileMenuOpen(false)}>Features</a></li>
               <li><a href="#architecture" className="nav-link" onClick={() => setMobileMenuOpen(false)}>Architecture</a></li>
             </>
