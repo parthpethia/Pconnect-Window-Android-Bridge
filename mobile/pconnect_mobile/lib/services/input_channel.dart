@@ -26,6 +26,18 @@ class InputChannel {
     _send(0x05, 0, dy, 0);
   }
 
+  void sendMouseSetNormalized(double rx, double ry) {
+    final x = (rx.clamp(0.0, 1.0) * 65535).round();
+    final y = (ry.clamp(0.0, 1.0) * 65535).round();
+    _send(0x06, x, y, 1);
+  }
+
+  void sendMoveAndClickNormalized(double rx, double ry, int button) {
+    final x = (rx.clamp(0.0, 1.0) * 65535).round();
+    final y = (ry.clamp(0.0, 1.0) * 65535).round();
+    _send(0x07, x, y, button);
+  }
+
   void _send(int type, int x, int y, int extra) {
     if (_channel.state != RTCDataChannelState.RTCDataChannelOpen) return;
     try {

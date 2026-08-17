@@ -22,9 +22,8 @@ export default function Downloads() {
           <p>Runs quietly in your system tray on Windows 10 & 11. Handles UDP broadcast discovery and WebSocket control channel.</p>
           <span className="req-badge">Requires .NET 8 Runtime • Windows 10/11</span>
           <a 
-            href="https://github.com/parthpethia/Pconnect-Window-Android-Bridge-/releases" 
-            target="_blank" 
-            rel="noopener noreferrer" 
+            href="/releases/Pconnect.Agent.exe" 
+            download="Pconnect.Agent.exe"
             className="btn-primary"
             style={{ width: '100%', justifyContent: 'center', padding: '14px' }}
           >
@@ -41,9 +40,8 @@ export default function Downloads() {
           <p>Fast, intuitive Flutter interface for auto-discovering PCs, pairing via PIN code, remote screen view, and trackpad input.</p>
           <span className="req-badge">Android 8.0 (API 26) or higher</span>
           <a 
-            href="https://github.com/parthpethia/Pconnect-Window-Android-Bridge-/releases" 
-            target="_blank" 
-            rel="noopener noreferrer" 
+            href="/releases/Pconnect.apk" 
+            download="Pconnect.apk"
             className="btn-primary"
             style={{ width: '100%', justifyContent: 'center', padding: '14px', background: 'linear-gradient(135deg, #00cec9 0%, #6c5ce7 100%)' }}
           >

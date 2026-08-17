@@ -180,6 +180,7 @@ class PcConnection {
   final ValueNotifier<List<CustomCommand>> commandListNotifier = ValueNotifier([]);
   final ValueNotifier<List<LogEntry>> logEntriesNotifier = ValueNotifier([]);
   final ValueNotifier<Uint8List?> screenFrameNotifier = ValueNotifier(null);
+  final ValueNotifier<double> screenAspectRatioNotifier = ValueNotifier(16 / 9);
   late final FrameJitterBuffer _jitterBuffer = FrameJitterBuffer(targetNotifier: screenFrameNotifier);
 
   RTCPeerConnection? _rtcPeer;
@@ -353,9 +354,15 @@ class PcConnection {
       if (event is List<int>) {
         if (event.length >= 9 && event[0] == 0x01) {
           final bytes = event is Uint8List ? event : Uint8List.fromList(event);
-          // Parse width (uint32 big-endian, bytes 1-4)
-          // Parse height (uint32 big-endian, bytes 5-8)
-          // Remaining bytes (9+) are raw JPEG payload
+          final bd = ByteData.sublistView(bytes, 1, 9);
+          final w = bd.getUint32(0);
+          final h = bd.getUint32(4);
+          if (w > 0 && h > 0) {
+            final aspect = w / h;
+            if ((screenAspectRatioNotifier.value - aspect).abs() > 0.001) {
+              screenAspectRatioNotifier.value = aspect;
+            }
+          }
           final jpegBytes = Uint8List.sublistView(bytes, 9);
           _jitterBuffer.pushFrame(jpegBytes);
         }
@@ -429,6 +436,14 @@ class PcConnection {
         case 'screenFrame':
           try {
             final data = obj['data'] as String?;
+            final w = (obj['width'] as num?)?.toDouble();
+            final h = (obj['height'] as num?)?.toDouble();
+            if (w != null && h != null && w > 0 && h > 0) {
+              final aspect = w / h;
+              if ((screenAspectRatioNotifier.value - aspect).abs() > 0.001) {
+                screenAspectRatioNotifier.value = aspect;
+              }
+            }
             if (data != null) {
               final gen = ++_screenFrameGen;
               final decoded = await compute(_decodeScreenFrameBase64, data);
@@ -738,6 +753,60 @@ class PcConnection {
       return;
     }
     _send({'v': 1, 'type': 'mouseMove', 'dx': dx, 'dy': dy});
+  }
+
+  void mouseSetNormalized({required double xRatio, required double yRatio}) {
+    final rx = xRatio.clamp(0.0, 1.0);
+    final ry = yRatio.clamp(0.0, 1.0);
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendMouseSetNormalized(rx, ry);
+      return;
+    }
+    _send({'v': 1, 'type': 'mouseSet', 'xRatio': rx, 'yRatio': ry});
+  }
+
+  void tapScreen({required double xRatio, required double yRatio}) {
+    final rx = xRatio.clamp(0.0, 1.0);
+    final ry = yRatio.clamp(0.0, 1.0);
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendMoveAndClickNormalized(rx, ry, 0);
+      return;
+    }
+    _send({
+      'v': 1,
+      'type': 'mouseButton',
+      'button': 'left',
+      'action': 'click',
+      'xRatio': rx,
+      'yRatio': ry,
+    });
+  }
+
+  void doubleClickScreen({required double xRatio, required double yRatio}) {
+    tapScreen(xRatio: xRatio, yRatio: yRatio);
+    Future.delayed(const Duration(milliseconds: 60), () {
+      tapScreen(xRatio: xRatio, yRatio: yRatio);
+    });
+  }
+
+  void rightClickScreen({required double xRatio, required double yRatio}) {
+    final rx = xRatio.clamp(0.0, 1.0);
+    final ry = yRatio.clamp(0.0, 1.0);
+    final ic = inputChannel;
+    if (ic != null) {
+      ic.sendMoveAndClickNormalized(rx, ry, 1);
+      return;
+    }
+    _send({
+      'v': 1,
+      'type': 'mouseButton',
+      'button': 'right',
+      'action': 'click',
+      'xRatio': rx,
+      'yRatio': ry,
+    });
   }
 
   void mouseScroll({required int dy}) {

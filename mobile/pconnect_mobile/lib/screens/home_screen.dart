@@ -15,6 +15,7 @@ import '../widgets/collapsible_section.dart';
 import '../services/connection.dart';
 import '../main.dart';
 import '../widgets/screen_preview_webrtc.dart';
+import '../widgets/interactive_screen_preview.dart';
 import '../widgets/transfer_progress_sheet.dart';
 import '../widgets/resume_transfer_dialog.dart';
 import 'transfer_queue_screen.dart';
@@ -741,54 +742,60 @@ class _ScreenPreviewWithTrackpadState extends State<_ScreenPreviewWithTrackpad> 
         if (widget.screenPreviewOn && widget.connected && conn != null)
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: InteractiveViewer(
-              minScale: 1.0,
-              maxScale: 6.0,
-              child: ValueListenableBuilder<RTCVideoRenderer?>(
-                valueListenable: conn.webrtcRendererNotifier,
-                builder: (context, renderer, _) {
-                  if (renderer != null) {
-                    return ValueListenableBuilder<RTCVideoValue>(
-                      valueListenable: renderer,
-                      builder: (context, value, _) {
-                        final aspect = value.aspectRatio > 0 ? value.aspectRatio : 16 / 9;
-                        return AspectRatio(
-                          aspectRatio: aspect,
-                          child: ScreenPreviewWebRtc(renderer: renderer),
-                        );
-                      },
-                    );
-                  }
-                  return ValueListenableBuilder<Uint8List?>(
-                    valueListenable: conn.screenFrameNotifier,
-                    builder: (context, frame, _) {
-                      if (frame == null) {
-                        return Container(
-                          height: 120,
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Center(child: CircularProgressIndicator()),
-                        );
-                      }
-                      return Image.memory(
-                        frame,
-                        gaplessPlayback: true,
-                        filterQuality: FilterQuality.medium,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: Colors.grey.shade900,
-                            child: const Center(
-                              child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+            child: ValueListenableBuilder<double>(
+              valueListenable: conn.screenAspectRatioNotifier,
+              builder: (context, dynamicAspect, _) {
+                return ValueListenableBuilder<RTCVideoRenderer?>(
+                  valueListenable: conn.webrtcRendererNotifier,
+                  builder: (context, renderer, _) {
+                    final aspect = (renderer != null && renderer.value.aspectRatio > 0)
+                        ? renderer.value.aspectRatio
+                        : dynamicAspect;
+                    return InteractiveScreenPreview(
+                      conn: conn,
+                      enabled: widget.connected && widget.screenPreviewOn,
+                      aspectRatio: aspect,
+                      child: renderer != null
+                          ? AspectRatio(
+                              aspectRatio: aspect,
+                              child: ScreenPreviewWebRtc(renderer: renderer),
+                            )
+                          : ValueListenableBuilder<Uint8List?>(
+                              valueListenable: conn.screenFrameNotifier,
+                              builder: (context, frame, _) {
+                                if (frame == null) {
+                                  return Container(
+                                    height: 120,
+                                    decoration: BoxDecoration(
+                                      color: cs.surfaceContainerHighest,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Center(child: CircularProgressIndicator()),
+                                  );
+                                }
+                                return AspectRatio(
+                                  aspectRatio: aspect,
+                                  child: Image.memory(
+                                    frame,
+                                    gaplessPlayback: true,
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.medium,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        color: Colors.grey.shade900,
+                                        child: const Center(
+                                          child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
-                      );
-                    },
-                  );
-                },
-              ),
+                    );
+                  },
+                );
+              },
             ),
           ),
       ],

@@ -19,12 +19,26 @@ Push-Location $mobileDir
 try {
     flutter pub get
     flutter build apk --release
+    if ($LASTEXITCODE -ne 0) {
+        throw "flutter build apk failed with exit code $LASTEXITCODE"
+    }
     $apkSource = Join-Path $mobileDir 'build\app\outputs\flutter-apk\app-release.apk'
     if (Test-Path $apkSource) {
         $dest = Copy-Item -Path $apkSource -Destination (Join-Path $outputDir 'Pconnect.apk') -Force -PassThru
         Write-Host "Build complete! APK saved to: $($dest.FullName)"
+
+        $webpageReleases = Join-Path $PSScriptRoot '..\webpage\public\releases'
+        if (Test-Path $webpageReleases) {
+            Copy-Item -Path $apkSource -Destination (Join-Path $webpageReleases 'Pconnect.apk') -Force
+            Write-Host "Copied APK to: $webpageReleases"
+        }
+        $websiteReleases = Join-Path $PSScriptRoot '..\website\public\releases'
+        if (Test-Path $websiteReleases) {
+            Copy-Item -Path $apkSource -Destination (Join-Path $websiteReleases 'Pconnect.apk') -Force
+            Write-Host "Copied APK to: $websiteReleases"
+        }
     } else {
-        Write-Host "Build finished, but app-release.apk was not found."
+        throw "Build finished, but app-release.apk was not found at $apkSource."
     }
 } finally {
     Pop-Location

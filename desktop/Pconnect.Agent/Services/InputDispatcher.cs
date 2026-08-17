@@ -82,6 +82,31 @@ internal sealed class InputDispatcher
                 // y holds the wheel delta, e.g., 120 or -120
                 _keyboard.ScrollWheel(y);
                 break;
+
+            case 0x06: // Mouse Move Absolute (Normalized if extra == 1, or pixels if extra == 0)
+                if (extra == 1)
+                {
+                    double rx = Math.Clamp(x / 65535.0, 0.0, 1.0);
+                    double ry = Math.Clamp(y / 65535.0, 0.0, 1.0);
+                    _keyboard.MoveMouseNormalized(rx, ry);
+                }
+                else
+                {
+                    _keyboard.MoveMouseTo(x, y);
+                }
+                break;
+
+            case 0x07: // Mouse Move & Click Normalized
+                double crx = Math.Clamp(x / 65535.0, 0.0, 1.0);
+                double cry = Math.Clamp(y / 65535.0, 0.0, 1.0);
+                string btnStr = extra switch
+                {
+                    1 => "right",
+                    2 => "middle",
+                    _ => "left"
+                };
+                _keyboard.MoveAndClickNormalized(crx, cry, btnStr);
+                break;
         }
     }
 }

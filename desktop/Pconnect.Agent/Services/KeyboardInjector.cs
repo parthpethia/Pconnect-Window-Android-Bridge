@@ -23,6 +23,8 @@ internal class KeyboardInjector
     private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
     private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
     private const uint MOUSEEVENTF_WHEEL = 0x0800;
+    private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
+    private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
 
     private const ushort VK_BACK = 0x08;
     private const ushort VK_LWIN = 0x5B;
@@ -81,6 +83,12 @@ internal class KeyboardInjector
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetCursorPos(int X, int Y);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
     private void SendInputInternal(INPUT[] inputs)
     {
         if (inputs == null || inputs.Length == 0) return;
@@ -93,6 +101,28 @@ internal class KeyboardInjector
                 InputBlocked?.Invoke();
             }
         }
+    }
+
+    private static INPUT MouseAbsolute(double rx, double ry, uint flags, uint mouseData = 0)
+    {
+        int dx = (int)Math.Clamp(Math.Round(rx * 65535.0), 0, 65535);
+        int dy = (int)Math.Clamp(Math.Round(ry * 65535.0), 0, 65535);
+        return new INPUT
+        {
+            type = INPUT_MOUSE,
+            U = new InputUnion
+            {
+                mi = new MOUSEINPUT
+                {
+                    dx = dx,
+                    dy = dy,
+                    mouseData = mouseData,
+                    dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE | flags,
+                    time = 0,
+                    dwExtraInfo = 0,
+                }
+            }
+        };
     }
 
     public virtual void MoveMouseBy(int dx, int dy)
@@ -108,6 +138,66 @@ internal class KeyboardInjector
         };
 
         SendInputInternal(inputs);
+    }
+
+    public virtual void MoveMouseTo(int x, int y)
+    {
+        SetCursorPos(x, y);
+    }
+
+    public virtual void MoveMouseNormalized(double rx, double ry)
+    {
+        var inputs = new[]
+        {
+            MouseAbsolute(rx, ry, 0),
+        };
+        SendInputInternal(inputs);
+
+        int sw = GetSystemMetrics(0); // SM_CXSCREEN
+        int sh = GetSystemMetrics(1); // SM_CYSCREEN
+        if (sw <= 0) sw = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
+        if (sh <= 0) sh = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Height ?? 1080;
+        int x = (int)Math.Round(rx * sw);
+        int y = (int)Math.Round(ry * sh);
+        SetCursorPos(x, y);
+    }
+
+    public virtual void MoveAndClickNormalized(double rx, double ry, string button = "left")
+    {
+        button = (button ?? "left").Trim().ToLowerInvariant();
+        uint downFlag = MOUSEEVENTF_LEFTDOWN;
+        uint upFlag = MOUSEEVENTF_LEFTUP;
+        if (button == "right")
+        {
+            downFlag = MOUSEEVENTF_RIGHTDOWN;
+            upFlag = MOUSEEVENTF_RIGHTUP;
+        }
+        else if (button == "middle")
+        {
+            downFlag = MOUSEEVENTF_MIDDLEDOWN;
+            upFlag = MOUSEEVENTF_MIDDLEUP;
+        }
+
+        int sw = GetSystemMetrics(0);
+        int sh = GetSystemMetrics(1);
+        if (sw <= 0) sw = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
+        if (sh <= 0) sh = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Height ?? 1080;
+        int x = (int)Math.Round(rx * sw);
+        int y = (int)Math.Round(ry * sh);
+        SetCursorPos(x, y);
+
+        SendInputInternal(new[]
+        {
+            MouseAbsolute(rx, ry, 0),
+            MouseAbsolute(rx, ry, downFlag),
+        });
+
+        Thread.Sleep(15);
+
+        SendInputInternal(new[]
+        {
+            MouseAbsolute(rx, ry, upFlag),
+        });
     }
 
     public virtual void ScrollWheel(int wheelDelta)
@@ -134,32 +224,23 @@ internal class KeyboardInjector
 
     public virtual void LeftClick()
     {
-        var inputs = new[]
-        {
-            Mouse(0, 0, 0, MOUSEEVENTF_LEFTDOWN),
-            Mouse(0, 0, 0, MOUSEEVENTF_LEFTUP),
-        };
-        SendInputInternal(inputs);
+        SendInputInternal(new[] { Mouse(0, 0, 0, MOUSEEVENTF_LEFTDOWN) });
+        Thread.Sleep(15);
+        SendInputInternal(new[] { Mouse(0, 0, 0, MOUSEEVENTF_LEFTUP) });
     }
 
     public virtual void RightClick()
     {
-        var inputs = new[]
-        {
-            Mouse(0, 0, 0, MOUSEEVENTF_RIGHTDOWN),
-            Mouse(0, 0, 0, MOUSEEVENTF_RIGHTUP),
-        };
-        SendInputInternal(inputs);
+        SendInputInternal(new[] { Mouse(0, 0, 0, MOUSEEVENTF_RIGHTDOWN) });
+        Thread.Sleep(15);
+        SendInputInternal(new[] { Mouse(0, 0, 0, MOUSEEVENTF_RIGHTUP) });
     }
 
     public virtual void MiddleClick()
     {
-        var inputs = new[]
-        {
-            Mouse(0, 0, 0, MOUSEEVENTF_MIDDLEDOWN),
-            Mouse(0, 0, 0, MOUSEEVENTF_MIDDLEUP),
-        };
-        SendInputInternal(inputs);
+        SendInputInternal(new[] { Mouse(0, 0, 0, MOUSEEVENTF_MIDDLEDOWN) });
+        Thread.Sleep(15);
+        SendInputInternal(new[] { Mouse(0, 0, 0, MOUSEEVENTF_MIDDLEUP) });
     }
 
     public virtual void SendVk(ushort vk)

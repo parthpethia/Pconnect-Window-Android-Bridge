@@ -22,7 +22,9 @@ internal static class AdminRelaunchHelper
             if (exeName.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase) ||
                 exeName.Equals("dotnet", StringComparison.OrdinalIgnoreCase))
             {
+#pragma warning disable IL3000 // Assembly.Location is only evaluated when running via dotnet.exe CLI
                 var entryAssembly = Assembly.GetEntryAssembly()?.Location;
+#pragma warning restore IL3000
                 if (!string.IsNullOrEmpty(entryAssembly) && File.Exists(entryAssembly))
                 {
                     arguments = $"exec \"{entryAssembly}\" --relaunch-from-pid {Environment.ProcessId}";

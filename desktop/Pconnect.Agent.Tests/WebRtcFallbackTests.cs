@@ -51,6 +51,21 @@ public sealed class WebRtcFallbackTests
     }
 
     [Fact]
+    public void InputDispatcher_parses_mouse_move_absolute_packet_safely()
+    {
+        var injector = new KeyboardInjector();
+        var dispatcher = new InputDispatcher(injector);
+
+        // Event type 0x06 (absolute move), x=32767, y=32767, extra=1 (normalized)
+        var packet = new byte[10];
+        packet[0] = 0x06;
+        packet[1] = 0x00; packet[2] = 0x00; packet[3] = 0x7F; packet[4] = 0xFF;
+        packet[5] = 0x00; packet[6] = 0x00; packet[7] = 0x7F; packet[8] = 0xFF;
+        packet[9] = 0x01;
+        dispatcher.Dispatch(packet); // Should dispatch without throwing
+    }
+
+    [Fact]
     public void InputDispatcher_ignores_unknown_mouse_buttons()
     {
         var injector = new KeyboardInjector();

@@ -120,6 +120,21 @@ internal sealed class PcActions
         _keyboard.MoveMouseBy(dx, dy);
     }
 
+    public void MoveMouseTo(int x, int y)
+    {
+        _keyboard.MoveMouseTo(x, y);
+    }
+
+    public void MoveMouseNormalized(double rx, double ry)
+    {
+        _keyboard.MoveMouseNormalized(rx, ry);
+    }
+
+    public void MoveAndClickNormalized(double rx, double ry, string button = "left")
+    {
+        _keyboard.MoveAndClickNormalized(rx, ry, button);
+    }
+
     public void MouseScroll(int wheelDelta)
     {
         _keyboard.ScrollWheel(wheelDelta);

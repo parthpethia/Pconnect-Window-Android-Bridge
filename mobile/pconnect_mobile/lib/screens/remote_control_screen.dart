@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/connection.dart';
 import '../widgets/screen_preview_webrtc.dart';
+import '../widgets/interactive_screen_preview.dart';
 import 'diagnostics_screen.dart';
 
 /// Screen capture quality presets — balances sharpness vs bandwidth.
@@ -50,18 +51,20 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
   bool _screenOn = false;
   int _modeIndex = 0; // 0 = trackpad, 1 = keyboard
   ScreenQuality _quality = ScreenQuality.normal;
+  BoxFit _previewFit = BoxFit.contain;
 
   @override
   void initState() {
     super.initState();
-    _loadQualityPref();
+    _loadPrefs();
   }
 
-  Future<void> _loadQualityPref() async {
+  Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
         _quality = ScreenQuality.fromName(prefs.getString('screen_quality'));
+        _previewFit = prefs.getString('screen_fit_mode') == 'cover' ? BoxFit.cover : BoxFit.contain;
       });
     }
   }
@@ -70,7 +73,6 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('screen_quality', q.name);
     setState(() => _quality = q);
-    // Restart capture with new quality if preview is on
     if (_screenOn) {
       widget.conn?.stopScreenCapture();
       widget.conn?.startScreenCapture(
@@ -79,6 +81,13 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
         quality: q.quality,
       );
     }
+  }
+
+  Future<void> _toggleFitMode() async {
+    final newFit = _previewFit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
+    setState(() => _previewFit = newFit);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('screen_fit_mode', newFit == BoxFit.cover ? 'cover' : 'contain');
   }
 
   @override
@@ -102,7 +111,6 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
 
   void _openFullscreen() {
     if (!widget.connected) return;
-    // Ensure preview is on
     if (!_screenOn) _togglePreview(true);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => _FullscreenRemote(
@@ -140,6 +148,16 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
                   tooltip: 'Connection Error',
                   onPressed: () => _showErrorDialog(context, conn, status),
                 ),
+              // Fit / Fill ratio toggle
+              IconButton(
+                icon: Icon(
+                  _previewFit == BoxFit.cover ? Icons.crop_free_rounded : Icons.fit_screen_rounded,
+                  size: 20,
+                  color: cs.primary,
+                ),
+                tooltip: _previewFit == BoxFit.cover ? 'Fit Screen Ratio' : 'Fill Container Area',
+                onPressed: enabled ? _toggleFitMode : null,
+              ),
               // Quality selector
               PopupMenuButton<ScreenQuality>(
                 icon: Icon(
@@ -198,15 +216,43 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
           body: Column(
             children: [
               // ── TOP: Screen Preview ──
-              Expanded(
-                flex: 5,
-                child: _PreviewPanel(
-                  conn: conn,
-                  screenOn: _screenOn && enabled,
-                  cs: cs,
-                  quality: _quality,
+              if (_screenOn && enabled && _previewFit == BoxFit.contain)
+                ValueListenableBuilder<double>(
+                  valueListenable: conn.screenAspectRatioNotifier,
+                  builder: (context, aspect, _) {
+                    return ValueListenableBuilder<RTCVideoRenderer?>(
+                      valueListenable: conn.webrtcRendererNotifier,
+                      builder: (context, renderer, _) {
+                        final effAspect = (renderer != null && renderer.value.aspectRatio > 0)
+                            ? renderer.value.aspectRatio
+                            : aspect;
+                        return AspectRatio(
+                          aspectRatio: effAspect,
+                          child: _PreviewPanel(
+                            conn: conn,
+                            screenOn: _screenOn && enabled,
+                            cs: cs,
+                            quality: _quality,
+                            fit: _previewFit,
+                            onToggleFit: _toggleFitMode,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                )
+              else
+                Expanded(
+                  flex: (_screenOn && enabled) ? 5 : 2,
+                  child: _PreviewPanel(
+                    conn: conn,
+                    screenOn: _screenOn && enabled,
+                    cs: cs,
+                    quality: _quality,
+                    fit: _previewFit,
+                    onToggleFit: _toggleFitMode,
+                  ),
                 ),
-              ),
 
               // ── Mode toggle chips ──
               Padding(
@@ -358,8 +404,17 @@ class _PreviewPanel extends StatelessWidget {
   final bool screenOn;
   final ColorScheme cs;
   final ScreenQuality quality;
+  final BoxFit fit;
+  final VoidCallback? onToggleFit;
 
-  const _PreviewPanel({required this.conn, required this.screenOn, required this.cs, required this.quality});
+  const _PreviewPanel({
+    required this.conn,
+    required this.screenOn,
+    required this.cs,
+    required this.quality,
+    this.fit = BoxFit.contain,
+    this.onToggleFit,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -384,47 +439,57 @@ class _PreviewPanel extends StatelessWidget {
     }
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.3)),
       ),
       clipBehavior: Clip.antiAlias,
-      child: InteractiveViewer(
-        minScale: 1.0,
-        maxScale: 6.0,
-        child: ValueListenableBuilder<RTCVideoRenderer?>(
-          valueListenable: conn!.webrtcRendererNotifier,
-          builder: (context, renderer, _) {
-            if (renderer != null) {
-              return ScreenPreviewWebRtc(renderer: renderer);
-            }
-            return ValueListenableBuilder<Uint8List?>(
-              valueListenable: conn!.screenFrameNotifier,
-              builder: (context, frame, _) {
-                if (frame == null) {
-                  return Center(child: CircularProgressIndicator(color: cs.primary));
-                }
-                return Image.memory(
-                  frame,
-                  gaplessPlayback: true,
-                  fit: BoxFit.contain,
-                  filterQuality: quality == ScreenQuality.best
-                      ? FilterQuality.high
-                      : FilterQuality.medium,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      color: Colors.grey.shade900,
-                      child: const Center(
-                        child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+      child: ValueListenableBuilder<double>(
+        valueListenable: conn!.screenAspectRatioNotifier,
+        builder: (context, dynamicAspect, _) {
+          return ValueListenableBuilder<RTCVideoRenderer?>(
+            valueListenable: conn!.webrtcRendererNotifier,
+            builder: (context, renderer, _) {
+              final aspect = (renderer != null && renderer.value.aspectRatio > 0)
+                  ? renderer.value.aspectRatio
+                  : dynamicAspect;
+              return InteractiveScreenPreview(
+                conn: conn,
+                enabled: screenOn,
+                aspectRatio: aspect,
+                fit: fit,
+                onToggleFit: onToggleFit,
+                child: renderer != null
+                    ? ScreenPreviewWebRtc(renderer: renderer, fit: fit)
+                    : ValueListenableBuilder<Uint8List?>(
+                        valueListenable: conn!.screenFrameNotifier,
+                        builder: (context, frame, _) {
+                          if (frame == null) {
+                            return Center(child: CircularProgressIndicator(color: cs.primary));
+                          }
+                          return Image.memory(
+                            frame,
+                            gaplessPlayback: true,
+                            fit: fit,
+                            filterQuality: quality == ScreenQuality.best
+                                ? FilterQuality.high
+                                : FilterQuality.medium,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: Colors.grey.shade900,
+                                child: const Center(
+                                  child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                                ),
+                              );
+                            },
+                          );
+                        },
                       ),
-                    );
-                  },
-                );
-              },
-            );
-          },
-        ),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -831,6 +896,7 @@ class _FullscreenRemote extends StatefulWidget {
 class _FullscreenRemoteState extends State<_FullscreenRemote> {
   late int _mode;
   bool _showCrosshair = false;
+  BoxFit _fitMode = BoxFit.contain;
 
   @override
   void initState() {
@@ -887,41 +953,51 @@ class _FullscreenRemoteState extends State<_FullscreenRemote> {
                     clipBehavior: Clip.antiAlias,
                     child: Stack(
                       children: [
-                        InteractiveViewer(
-                          minScale: 1.0,
-                          maxScale: 6.0,
-                          child: ValueListenableBuilder<RTCVideoRenderer?>(
-                            valueListenable: conn.webrtcRendererNotifier,
-                            builder: (context, renderer, _) {
-                              if (renderer != null) {
-                                return ScreenPreviewWebRtc(renderer: renderer);
-                              }
-                              return ValueListenableBuilder<Uint8List?>(
-                                valueListenable: conn.screenFrameNotifier,
-                                builder: (_, frame, __) {
-                                  if (frame == null) {
-                                    return Center(child: CircularProgressIndicator(color: cs.primary));
-                                  }
-                                  return Image.memory(
-                                    frame,
-                                    gaplessPlayback: true,
-                                    fit: BoxFit.contain,
-                                    filterQuality: widget.quality == ScreenQuality.best
-                                        ? FilterQuality.high
-                                        : FilterQuality.medium,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Container(
-                                        color: Colors.grey.shade900,
-                                        child: const Center(
-                                          child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                        ValueListenableBuilder<double>(
+                          valueListenable: conn.screenAspectRatioNotifier,
+                          builder: (context, dynamicAspect, _) {
+                            return ValueListenableBuilder<RTCVideoRenderer?>(
+                              valueListenable: conn.webrtcRendererNotifier,
+                              builder: (context, renderer, _) {
+                                final aspect = (renderer != null && renderer.value.aspectRatio > 0)
+                                    ? renderer.value.aspectRatio
+                                    : dynamicAspect;
+                                return InteractiveScreenPreview(
+                                  conn: conn,
+                                  enabled: connected,
+                                  aspectRatio: aspect,
+                                  fit: _fitMode,
+                                  onToggleFit: () => setState(() => _fitMode = _fitMode == BoxFit.contain ? BoxFit.cover : BoxFit.contain),
+                                  child: renderer != null
+                                      ? ScreenPreviewWebRtc(renderer: renderer, fit: _fitMode)
+                                      : ValueListenableBuilder<Uint8List?>(
+                                          valueListenable: conn.screenFrameNotifier,
+                                          builder: (_, frame, __) {
+                                            if (frame == null) {
+                                              return Center(child: CircularProgressIndicator(color: cs.primary));
+                                            }
+                                            return Image.memory(
+                                              frame,
+                                              gaplessPlayback: true,
+                                              fit: _fitMode,
+                                              filterQuality: widget.quality == ScreenQuality.best
+                                                  ? FilterQuality.high
+                                                  : FilterQuality.medium,
+                                              errorBuilder: (context, error, stackTrace) {
+                                                return Container(
+                                                  color: Colors.grey.shade900,
+                                                  child: const Center(
+                                                    child: Icon(Icons.broken_image_rounded, color: Colors.white30, size: 36),
+                                                  ),
+                                                );
+                                              },
+                                            );
+                                          },
                                         ),
-                                      );
-                                    },
-                                  );
-                                },
-                              );
-                            },
-                          ),
+                                );
+                              },
+                            );
+                          },
                         ),
                         if (_showCrosshair)
                           IgnorePointer(

@@ -582,6 +582,21 @@ internal sealed class WebSocketHandler
                         _pc.MouseMove(msg.GetIntOrDefault("dx", 0), msg.GetIntOrDefault("dy", 0));
                         break;
 
+                    case "mouseset":
+                    case "mouseto":
+                        if (!RequireAdmin()) break;
+                        var rx = msg.GetDoubleOrDefault("xRatio", -1.0);
+                        var ry = msg.GetDoubleOrDefault("yRatio", -1.0);
+                        if (rx >= 0 && ry >= 0)
+                        {
+                            _pc.MoveMouseNormalized(rx, ry);
+                        }
+                        else
+                        {
+                            _pc.MoveMouseTo(msg.GetIntOrDefault("x", 0), msg.GetIntOrDefault("y", 0));
+                        }
+                        break;
+
                     case "mousescroll":
                         if (!RequireAdmin()) break;
                         _pc.MouseScroll(msg.GetIntOrDefault("dy", 0));
@@ -596,7 +611,16 @@ internal sealed class WebSocketHandler
                             await SendAsync(ws, new { v = 1, type = "error", message = "Missing button/action" }, ct);
                             break;
                         }
-                        _pc.MouseButton(btn, act);
+                        var mbRx = msg.GetDoubleOrDefault("xRatio", -1.0);
+                        var mbRy = msg.GetDoubleOrDefault("yRatio", -1.0);
+                        if (mbRx >= 0 && mbRy >= 0 && act.Trim().ToLowerInvariant() == "click")
+                        {
+                            _pc.MoveAndClickNormalized(mbRx, mbRy, btn);
+                        }
+                        else
+                        {
+                            _pc.MouseButton(btn, act);
+                        }
                         await SendAsync(ws, new { v = 1, type = "ok" }, ct);
                         break;
 
@@ -1658,6 +1682,16 @@ internal static class JsonDictExtensions
         return el.ValueKind switch
         {
             JsonValueKind.Number when el.TryGetInt64(out var v) => v,
+            _ => fallback,
+        };
+    }
+
+    public static double GetDoubleOrDefault(this Dictionary<string, JsonElement> dict, string key, double fallback)
+    {
+        if (!dict.TryGetValue(key, out var el)) return fallback;
+        return el.ValueKind switch
+        {
+            JsonValueKind.Number when el.TryGetDouble(out var v) => v,
             _ => fallback,
         };
     }
