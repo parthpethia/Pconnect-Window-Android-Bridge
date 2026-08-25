@@ -8,11 +8,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'app_launcher_screen.dart';
+import 'voice_assistant_screen.dart';
 
 import '../constants/theme_tokens.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/collapsible_section.dart';
 import '../services/connection.dart';
+import '../services/speech_service.dart';
+import '../services/voice_agent_service.dart';
 import '../main.dart';
 import '../widgets/screen_preview_webrtc.dart';
 import '../widgets/interactive_screen_preview.dart';
@@ -25,12 +28,16 @@ class HomeScreen extends StatefulWidget {
   final PcConnection? conn;
   final ConnectionStatus status;
   final VoidCallback onOpenDiscovery;
+  final VoiceAgentService? voiceAgent;
+  final SpeechService? speechService;
 
   const HomeScreen({
     super.key,
     required this.conn,
     required this.status,
     required this.onOpenDiscovery,
+    this.voiceAgent,
+    this.speechService,
   });
 
   @override
@@ -108,6 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!context.mounted || mode == null) return;
 
     if (mode == 'files') {
+      // ignore: deprecated_member_use
       final result = await FilePicker.pickFiles(allowMultiple: true);
       if (result != null && result.files.isNotEmpty) {
         final validFiles = result.files.where((f) => f.path != null).toList();
@@ -270,6 +278,158 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+
+          // ── Voice Assistant ──
+          if (widget.voiceAgent != null && widget.speechService != null)
+            CollapsibleSection(
+              title: 'Voice Assistant',
+              icon: Icons.mic_rounded,
+              storageKey: 'home_voice',
+              child: Column(
+                children: [
+                  // Voice agent status
+                  ValueListenableBuilder<VoiceAgentStatus>(
+                    valueListenable: widget.voiceAgent!.statusNotifier,
+                    builder: (context, status, _) {
+                      final Color chipColor;
+                      final String chipLabel;
+                      switch (status.state) {
+                        case VoiceAgentConnectionState.connected:
+                          chipColor = AppColors.success;
+                          chipLabel = 'Agent Connected';
+                        case VoiceAgentConnectionState.connecting:
+                        case VoiceAgentConnectionState.authenticating:
+                          chipColor = AppColors.warning;
+                          chipLabel = 'Connecting…';
+                        case VoiceAgentConnectionState.authFailed:
+                          chipColor = AppColors.danger;
+                          chipLabel = 'Auth Failed';
+                        case VoiceAgentConnectionState.disconnected:
+                          chipColor = AppColors.danger;
+                          chipLabel = 'Not Connected';
+                      }
+                      return Row(
+                        children: [
+                          Container(
+                            width: 8, height: 8,
+                            decoration: BoxDecoration(shape: BoxShape.circle, color: chipColor),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(chipLabel, style: AppTypography.caption.copyWith(color: chipColor)),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  // Mic button + open full screen
+                  ValueListenableBuilder<VoicePipelineState>(
+                    valueListenable: widget.speechService!.pipelineState,
+                    builder: (context, state, _) {
+                      final listening = state == VoicePipelineState.listening;
+                      final sttAvail = widget.speechService!.sttAvailable.value;
+                      final disabled = !sttAvail || (state != VoicePipelineState.idle && state != VoicePipelineState.listening);
+
+                      final String statusSubtitle = switch (state) {
+                        VoicePipelineState.idle => sttAvail ? 'Tap mic to speak' : 'Speech recognition unavailable',
+                        VoicePipelineState.listening => 'Listening…',
+                        VoicePipelineState.thinking => 'Thinking…',
+                        VoicePipelineState.executing => 'Executing command…',
+                        VoicePipelineState.speaking => 'Speaking response…',
+                      };
+
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: GlassCard(
+                              onTap: disabled
+                                  ? null
+                                  : () => Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => VoiceAssistantScreen(
+                                            voiceAgent: widget.voiceAgent!,
+                                            speechService: widget.speechService!,
+                                          ),
+                                        ),
+                                      ),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              backgroundColor: disabled
+                                  ? AppColors.bgElevated1
+                                  : listening
+                                      ? AppColors.danger.withValues(alpha: 0.16)
+                                      : AppColors.primary.withValues(alpha: 0.16),
+                              child: Row(
+                                children: [
+                                  GestureDetector(
+                                    onTap: disabled
+                                        ? null
+                                        : () async {
+                                            if (listening) {
+                                              await widget.speechService!.stopListening();
+                                            } else if (state == VoicePipelineState.idle) {
+                                              await widget.speechService!.startListening();
+                                            }
+                                          },
+                                    child: Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: disabled
+                                              ? [AppColors.textDisabled, AppColors.bgElevated2]
+                                              : listening
+                                                  ? [AppColors.danger, const Color(0xFFE17055)]
+                                                  : [AppColors.primary, const Color(0xFF8E2DE2)],
+                                        ),
+                                        shape: BoxShape.circle,
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: (listening ? AppColors.danger : AppColors.primary)
+                                                .withValues(alpha: disabled ? 0.0 : 0.4),
+                                            blurRadius: 12,
+                                          ),
+                                        ],
+                                      ),
+                                      child: Icon(
+                                        listening ? Icons.stop_rounded : Icons.mic_rounded,
+                                        color: Colors.white,
+                                        size: 24,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Voice Command',
+                                          style: AppTypography.label.copyWith(
+                                            color: disabled ? AppColors.textDisabled : AppColors.textPrimary,
+                                          ),
+                                        ),
+                                        Text(
+                                          statusSubtitle,
+                                          style: AppTypography.caption.copyWith(
+                                            color: disabled ? AppColors.textDisabled : AppColors.textSecondary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: disabled ? AppColors.textDisabled : AppColors.textSecondary,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
 
           // ── Media bar ──
           CollapsibleSection(

@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>PConnect needs access to your microphone to capture voice commands for controlling your PC.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>PConnect uses speech recognition to convert your spoken voice commands into PC actions.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

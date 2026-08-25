@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../constants/theme_tokens.dart';
 import '../services/connection.dart';
+import '../services/groq_service.dart';
+import '../services/speech_service.dart';
 import '../services/tofu_pin_store.dart';
+import '../services/voice_agent_service.dart';
 import '../widgets/collapsible_section.dart';
 import '../main.dart';
 import 'discovery_screen.dart';
@@ -12,12 +18,16 @@ class SettingsScreen extends StatefulWidget {
   final PcConnection? conn;
   final ConnectionStatus status;
   final VoidCallback onDisconnect;
+  final VoiceAgentService? voiceAgent;
+  final SpeechService? speechService;
 
   const SettingsScreen({
     super.key,
     required this.conn,
     required this.status,
     required this.onDisconnect,
+    this.voiceAgent,
+    this.speechService,
   });
 
   @override
@@ -31,11 +41,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoClipboardSync = true;
   List<ConnectionProfile> _profiles = [];
 
+  // Voice assistant settings
+  final _voiceAddressController = TextEditingController();
+  final _voiceTokenController = TextEditingController();
+  final _groqKeyController = TextEditingController();
+  bool _testingVoiceConnection = false;
+
   @override
   void initState() {
     super.initState();
     _loadPrefs();
     _loadProfiles();
+    _loadVoiceSettings();
+  }
+
+  @override
+  void dispose() {
+    _voiceAddressController.dispose();
+    _voiceTokenController.dispose();
+    _groqKeyController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPrefs() async {
@@ -51,6 +76,104 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadProfiles() async {
     final profiles = await ProfileStore.load();
     if (mounted) setState(() => _profiles = profiles);
+  }
+
+  Future<void> _loadVoiceSettings() async {
+    final agent = widget.voiceAgent;
+    if (agent == null) return;
+    await agent.loadSettings();
+    final groqKey = await GroqService.loadApiKey();
+    if (!mounted) return;
+    setState(() {
+      _voiceAddressController.text = agent.address ?? '';
+      _voiceTokenController.text = agent.token ?? '';
+      _groqKeyController.text = groqKey ?? '';
+    });
+  }
+
+  Future<void> _saveVoiceSettings() async {
+    final agent = widget.voiceAgent;
+    if (agent == null) return;
+    final address = _voiceAddressController.text.trim();
+    final token = _voiceTokenController.text.trim();
+    final groqKey = _groqKeyController.text.trim();
+    await agent.saveSettings(address: address, token: token);
+    if (groqKey.isNotEmpty) {
+      await GroqService.saveApiKey(groqKey);
+    } else {
+      await GroqService.deleteApiKey();
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Voice assistant settings saved')),
+    );
+  }
+
+  Future<void> _testVoiceConnection() async {
+    final agent = widget.voiceAgent;
+    if (agent == null) return;
+    final address = _voiceAddressController.text.trim();
+    final token = _voiceTokenController.text.trim();
+    if (address.isEmpty || token.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter both address and token first')),
+      );
+      return;
+    }
+    setState(() => _testingVoiceConnection = true);
+    final result = await agent.testConnection(address: address, token: token);
+    if (!mounted) return;
+    setState(() => _testingVoiceConnection = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.connected
+            ? 'Connected successfully!'
+            : result.error ?? 'Connection failed'),
+        backgroundColor: result.connected ? AppColors.success : null,
+      ),
+    );
+  }
+
+  Future<void> _clearVoiceSettings() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear Voice Settings'),
+        content: const Text('This will remove the saved PC agent address, shared token, and Groq API key. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    _voiceAddressController.clear();
+    _voiceTokenController.clear();
+    _groqKeyController.clear();
+
+    // Reset live voice state
+    final speech = widget.speechService;
+    if (speech != null) {
+      speech.liveTranscript.value = '';
+      speech.pipelineState.value = VoicePipelineState.idle;
+      try { unawaited(speech.stopListening()); } catch (_) {}
+      try { unawaited(speech.stopSpeaking()); } catch (_) {}
+    }
+
+    await widget.voiceAgent?.saveSettings(address: '', token: '');
+    await GroqService.deleteApiKey();
+    widget.voiceAgent?.disconnect();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Voice settings cleared')),
+    );
   }
 
   static const _tofuResetCooldownMs = 60000;
@@ -393,6 +516,115 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
+
+          // ── Voice Assistant ──
+          if (widget.voiceAgent != null)
+            CollapsibleSection(
+              title: 'Voice Assistant',
+              icon: Icons.mic_rounded,
+              storageKey: 'sett_voice',
+              defaultExpanded: false,
+              child: Column(
+                children: [
+                  // Connection status
+                  ValueListenableBuilder<VoiceAgentStatus>(
+                    valueListenable: widget.voiceAgent!.statusNotifier,
+                    builder: (context, status, _) {
+                      final Color dotColor;
+                      final String label;
+                      switch (status.state) {
+                        case VoiceAgentConnectionState.connected:
+                          dotColor = Colors.green;
+                          label = 'Voice agent connected';
+                        case VoiceAgentConnectionState.connecting:
+                        case VoiceAgentConnectionState.authenticating:
+                          dotColor = Colors.orange;
+                          label = 'Connecting…';
+                        case VoiceAgentConnectionState.authFailed:
+                          dotColor = cs.error;
+                          label = 'Auth failed — check token';
+                        case VoiceAgentConnectionState.disconnected:
+                          dotColor = cs.error;
+                          label = status.error ?? 'Not connected';
+                      }
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.circle, size: 12, color: dotColor),
+                        title: Text(label),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _voiceAddressController,
+                    decoration: const InputDecoration(
+                      labelText: 'PC Agent Address',
+                      hintText: '192.168.1.42:8765',
+                      helperText: 'ws:// connection — intended for trusted local Wi-Fi networks only',
+                      helperMaxLines: 2,
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.computer_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _voiceTokenController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Shared Token',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.key_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _groqKeyController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Groq API Key',
+                      hintText: 'gsk_...',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.vpn_key_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _saveVoiceSettings,
+                          icon: const Icon(Icons.save_rounded),
+                          label: const Text('Save'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _testingVoiceConnection ? null : _testVoiceConnection,
+                          icon: _testingVoiceConnection
+                              ? const SizedBox(
+                                  width: 16, height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.wifi_find_rounded),
+                          label: Text(_testingVoiceConnection ? 'Testing…' : 'Test'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _clearVoiceSettings,
+                      style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                      icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                      label: const Text('Clear Voice Settings'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // ── About ──
           CollapsibleSection(

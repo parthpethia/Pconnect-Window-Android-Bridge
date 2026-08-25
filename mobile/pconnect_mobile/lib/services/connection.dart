@@ -37,6 +37,41 @@ class DiscoveredPc {
   DiscoveredPc({required this.name, required this.address, required this.wsPort, this.wssPort});
 }
 
+class DisplayInfo {
+  final int index;
+  final String name;
+  final int deviceIndex;
+  final int x;
+  final int y;
+  final int width;
+  final int height;
+  final bool isPrimary;
+
+  DisplayInfo({
+    required this.index,
+    required this.name,
+    required this.deviceIndex,
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    required this.isPrimary,
+  });
+
+  factory DisplayInfo.fromJson(Map<String, dynamic> json) {
+    return DisplayInfo(
+      index: json['index'] as int? ?? 0,
+      name: json['name'] as String? ?? 'Display',
+      deviceIndex: json['deviceIndex'] as int? ?? 0,
+      x: json['x'] as int? ?? 0,
+      y: json['y'] as int? ?? 0,
+      width: json['width'] as int? ?? 1920,
+      height: json['height'] as int? ?? 1080,
+      isPrimary: json['isPrimary'] as bool? ?? false,
+    );
+  }
+}
+
 class ConnectionStatus {
   final bool connected;
   final bool needsPairing;
@@ -181,6 +216,8 @@ class PcConnection {
   final ValueNotifier<List<LogEntry>> logEntriesNotifier = ValueNotifier([]);
   final ValueNotifier<Uint8List?> screenFrameNotifier = ValueNotifier(null);
   final ValueNotifier<double> screenAspectRatioNotifier = ValueNotifier(16 / 9);
+  final ValueNotifier<List<DisplayInfo>> monitorsNotifier = ValueNotifier([]);
+  final ValueNotifier<int> activeDisplayIndexNotifier = ValueNotifier(0);
   late final FrameJitterBuffer _jitterBuffer = FrameJitterBuffer(targetNotifier: screenFrameNotifier);
 
   RTCPeerConnection? _rtcPeer;
@@ -383,7 +420,13 @@ class PcConnection {
           await _armIntegrityKey();
           _reconnectDelayMs = 500;
           _needsPairing = false;
+          _updateMonitorsList(obj['monitors']);
           _setStatus(_connectionStatusFromHelloAck(obj));
+          break;
+
+        case 'monitorsList':
+        case 'monitorsUpdated':
+          _updateMonitorsList(obj['monitors']);
           break;
 
         case 'authRequired':
@@ -894,19 +937,56 @@ class PcConnection {
     _send({'v': 1, 'type': 'clipboardSet', 'data': encoded, 'format': 'text/plain'});
   }
 
-  // ── Screen Capture ──
-  void startScreenCapture({int intervalMs = 1000, int width = 720, int quality = 65}) {
+  // ── Screen Capture & Display Selection ──
+  void _updateMonitorsList(dynamic rawMonitors) {
+    if (rawMonitors is List) {
+      final list = <DisplayInfo>[];
+      for (final item in rawMonitors) {
+        if (item is Map<String, dynamic>) {
+          list.add(DisplayInfo.fromJson(item));
+        }
+      }
+      monitorsNotifier.value = list;
+    }
+  }
+
+  void getMonitors() {
+    _send({'v': 1, 'type': 'getMonitors'});
+  }
+
+  void selectDisplay(int displayIndex) {
+    activeDisplayIndexNotifier.value = displayIndex;
+    if (_captureActive) {
+      stopScreenCapture();
+      startScreenCapture(
+        intervalMs: lastCaptureIntervalMs,
+        width: lastCaptureWidth,
+        quality: lastCaptureQuality,
+        displayIndex: displayIndex,
+      );
+    }
+  }
+
+  void startScreenCapture({int intervalMs = 1000, int width = 720, int quality = 65, int? displayIndex}) {
     _captureActive = true;
     lastCaptureIntervalMs = intervalMs;
     lastCaptureWidth = width;
     lastCaptureQuality = quality;
+    final targetDisplay = displayIndex ?? activeDisplayIndexNotifier.value;
     final mode = currentStatus.effectiveScreenStream;
     if (mode == ScreenStreamModes.webRtcV1) {
-      _startWebRtc(width: width, quality: quality);
+      _startWebRtc(width: width, quality: quality, displayIndex: targetDisplay);
       return;
     }
     if (mode != ScreenStreamModes.jpegV1 && mode != ScreenStreamModes.jpegBinV1) return;
-    _send({'v': 1, 'type': 'screenCaptureStart', 'intervalMs': intervalMs, 'width': width, 'quality': quality});
+    _send({
+      'v': 1,
+      'type': 'screenCaptureStart',
+      'intervalMs': intervalMs,
+      'width': width,
+      'quality': quality,
+      'displayIndex': targetDisplay,
+    });
   }
 
   void stopScreenCapture() {
@@ -921,7 +1001,7 @@ class PcConnection {
     screenFrameNotifier.value = null;
   }
 
-  Future<void> _startWebRtc({int width = 720, int quality = 65}) async {
+  Future<void> _startWebRtc({int width = 720, int quality = 65, int displayIndex = 0}) async {
     try {
       await _fallbackFromWebRtc(rescheduleRetry: false);
 
@@ -983,6 +1063,7 @@ class PcConnection {
         'sdp': offer.sdp,
         'width': width,
         'quality': quality,
+        'displayIndex': displayIndex,
       });
 
       _webrtcTimeout = Timer(const Duration(seconds: 5), () {

@@ -6,7 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'services/connection.dart';
+import 'services/speech_service.dart';
 import 'services/tofu_pin_store.dart';
+import 'services/voice_agent_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/control_screen.dart';
 import 'screens/remote_control_screen.dart';
@@ -95,6 +97,10 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
   ConnectionStatus _status = ConnectionStatus.disconnected;
   StreamSubscription<ConnectionStatus>? _statusSub;
 
+  // Voice assistant services
+  final VoiceAgentService _voiceAgent = VoiceAgentService();
+  final SpeechService _speechService = SpeechService();
+
   @override
   void initState() {
     super.initState();
@@ -108,6 +114,8 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _statusSub?.cancel();
     _conn?.dispose();
+    _voiceAgent.dispose();
+    _speechService.dispose();
     _themeController.dispose();
     super.dispose();
   }
@@ -120,6 +128,9 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
     final conn = _conn;
 
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      if (_speechService.pipelineState.value == VoicePipelineState.listening) {
+        unawaited(_speechService.stopListening());
+      }
       if (conn != null && conn.isCaptureActive) {
         _screenCaptureWasActive = true;
         conn.stopScreenCapture();
@@ -161,6 +172,17 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
 
     if (_lastHost != null && _token != null) {
       unawaited(_connectHost(_lastHost!, _lastPort, wssPort: _lastWssPort));
+    }
+
+    // Bootstrap voice assistant
+    unawaited(_bootstrapVoice());
+  }
+
+  Future<void> _bootstrapVoice() async {
+    await _speechService.initialize();
+    await _voiceAgent.loadSettings();
+    if (_voiceAgent.isConfigured) {
+      unawaited(_voiceAgent.connect());
     }
   }
 
@@ -259,6 +281,8 @@ class _PconnectAppState extends State<PconnectApp> with WidgetsBindingObserver {
                     conn: _conn,
                     status: _status,
                     onDisconnect: _disconnect,
+                    voiceAgent: _voiceAgent,
+                    speechService: _speechService,
                   );
                 }
               },
@@ -276,12 +300,16 @@ class MainShell extends StatefulWidget {
   final PcConnection? conn;
   final ConnectionStatus status;
   final VoidCallback onDisconnect;
+  final VoiceAgentService? voiceAgent;
+  final SpeechService? speechService;
 
   const MainShell({
     super.key,
     required this.conn,
     required this.status,
     required this.onDisconnect,
+    this.voiceAgent,
+    this.speechService,
   });
 
   @override
@@ -300,6 +328,8 @@ class _MainShellState extends State<MainShell> {
         conn: conn,
         status: widget.status,
         onOpenDiscovery: widget.onDisconnect,
+        voiceAgent: widget.voiceAgent,
+        speechService: widget.speechService,
       ),
       RemoteControlScreen(conn: conn, connected: widget.status.connected),
       ControlScreen(conn: conn, status: widget.status),
@@ -307,6 +337,8 @@ class _MainShellState extends State<MainShell> {
         conn: conn,
         status: widget.status,
         onDisconnect: widget.onDisconnect,
+        voiceAgent: widget.voiceAgent,
+        speechService: widget.speechService,
       ),
       LogsScreen(conn: conn, status: widget.status),
     ];

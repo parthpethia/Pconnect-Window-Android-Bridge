@@ -158,6 +158,64 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
                 tooltip: _previewFit == BoxFit.cover ? 'Fit Screen Ratio' : 'Fill Container Area',
                 onPressed: enabled ? _toggleFitMode : null,
               ),
+              // Display / Monitor selector
+              ValueListenableBuilder<List<DisplayInfo>>(
+                valueListenable: conn.monitorsNotifier,
+                builder: (context, monitors, _) {
+                  return ValueListenableBuilder<int>(
+                    valueListenable: conn.activeDisplayIndexNotifier,
+                    builder: (context, activeIndex, _) {
+                      if (monitors.isEmpty) return const SizedBox.shrink();
+                      final currentMon = monitors.firstWhere(
+                        (m) => m.index == activeIndex,
+                        orElse: () => monitors.first,
+                      );
+                      return PopupMenuButton<int>(
+                        icon: Icon(
+                          monitors.length > 1 ? Icons.desktop_windows_rounded : Icons.monitor_rounded,
+                          size: 20,
+                          color: cs.primary,
+                        ),
+                        tooltip: 'Select Display (${currentMon.name})',
+                        onSelected: enabled
+                            ? (idx) {
+                                conn.selectDisplay(idx);
+                              }
+                            : null,
+                        itemBuilder: (_) => monitors.map((m) {
+                          final active = m.index == activeIndex;
+                          return PopupMenuItem<int>(
+                            value: m.index,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  active ? Icons.radio_button_checked : Icons.radio_button_off,
+                                  size: 18,
+                                  color: active ? cs.primary : cs.onSurface.withValues(alpha: 0.5),
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  m.name,
+                                  style: TextStyle(
+                                    fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                                    color: active ? cs.primary : cs.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${m.width}x${m.height}',
+                                  style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.4)),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      );
+                    },
+                  );
+                },
+              ),
               // Quality selector
               PopupMenuButton<ScreenQuality>(
                 icon: Icon(

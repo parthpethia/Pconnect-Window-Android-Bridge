@@ -19,7 +19,7 @@ if (keyFileToLoad.exists()) {
 
 android {
     namespace = "com.pconnect.app"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
