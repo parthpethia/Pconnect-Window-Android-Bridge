@@ -156,24 +156,40 @@ internal sealed class ScreenCaptureService : IDisposable
         }
     }
 
+    public int DisplayIndex { get; set; } = 0;
+
+    private Rectangle GetSelectedBounds()
+    {
+        var screens = System.Windows.Forms.Screen.AllScreens;
+        if (DisplayIndex >= 0 && DisplayIndex < screens.Length)
+        {
+            return screens[DisplayIndex].Bounds;
+        }
+        if (DisplayIndex == -1)
+        {
+            return System.Windows.Forms.SystemInformation.VirtualScreen;
+        }
+        return System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 1920, 1080);
+    }
+
     private (string? base64, int width, int height) CaptureScreen()
     {
         try
         {
-            var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds;
-            if (bounds == null || bounds.Value.Width <= 0 || bounds.Value.Height <= 0)
+            var bounds = GetSelectedBounds();
+            if (bounds.Width <= 0 || bounds.Height <= 0)
             {
                 return (null, 0, 0);
             }
 
-            var screenWidth = bounds.Value.Width;
-            var screenHeight = bounds.Value.Height;
+            var screenWidth = bounds.Width;
+            var screenHeight = bounds.Height;
 
             using var fullBitmap = new Bitmap(screenWidth, screenHeight);
             using (var g = Graphics.FromImage(fullBitmap))
             {
-                g.CopyFromScreen(bounds.Value.Location, Point.Empty, bounds.Value.Size);
-                DrawCursorOnto(g, bounds.Value);
+                g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                DrawCursorOnto(g, bounds);
             }
 
             // Resize to target width with high quality
@@ -219,20 +235,20 @@ internal sealed class ScreenCaptureService : IDisposable
     {
         try
         {
-            var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds;
-            if (bounds == null || bounds.Value.Width <= 0 || bounds.Value.Height <= 0)
+            var bounds = GetSelectedBounds();
+            if (bounds.Width <= 0 || bounds.Height <= 0)
             {
                 return (null, 0, 0);
             }
 
-            var screenWidth = bounds.Value.Width;
-            var screenHeight = bounds.Value.Height;
+            var screenWidth = bounds.Width;
+            var screenHeight = bounds.Height;
 
             using var fullBitmap = new Bitmap(screenWidth, screenHeight);
             using (var g = Graphics.FromImage(fullBitmap))
             {
-                g.CopyFromScreen(bounds.Value.Location, Point.Empty, bounds.Value.Size);
-                DrawCursorOnto(g, bounds.Value);
+                g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                DrawCursorOnto(g, bounds);
             }
 
             var ratio = (double)_targetWidth / screenWidth;

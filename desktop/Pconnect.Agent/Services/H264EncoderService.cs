@@ -795,13 +795,9 @@ internal sealed class H264EncoderService : IDisposable
                             {
                                 using (var g = System.Drawing.Graphics.FromHdc(hdc))
                                 {
-                                    int physWidth = GetSystemMetrics(0); // SM_CXSCREEN (unscaled physical pixels)
-                                    int physHeight = GetSystemMetrics(1); // SM_CYSCREEN (unscaled physical pixels)
-                                    var screenBounds = (physWidth > 0 && physHeight > 0)
-                                        ? new System.Drawing.Rectangle(0, 0, physWidth, physHeight)
-                                        : (System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, (int)_gdiWidth, (int)_gdiHeight));
-                                    double scaleX = (double)_gdiWidth / screenBounds.Width;
-                                    double scaleY = (double)_gdiHeight / screenBounds.Height;
+                                    var screenBounds = new System.Drawing.Rectangle(0, 0, (int)_gdiWidth, (int)_gdiHeight);
+                                    double scaleX = (double)_gdiWidth / Math.Max(1, screenBounds.Width);
+                                    double scaleY = (double)_gdiHeight / Math.Max(1, screenBounds.Height);
                                     ScreenCaptureService.DrawCursorOnto(g, screenBounds, scaleX, scaleY);
                                 }
                             }

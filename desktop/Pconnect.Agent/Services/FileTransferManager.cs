@@ -102,7 +102,7 @@ internal sealed class FileTransferManager : IDisposable
                     try
                     {
                         var drive = new DriveInfo(rootPath);
-                        if (drive.AvailableFreeSpace < size)
+                        if (drive.IsReady && drive.AvailableFreeSpace > 0 && drive.AvailableFreeSpace < size)
                         {
                             error = $"Insufficient disk space (required: {size} bytes, available: {drive.AvailableFreeSpace} bytes)";
                             return null;

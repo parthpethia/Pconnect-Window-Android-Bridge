@@ -173,17 +173,20 @@ internal sealed class ScreenCaptureDxgi : IDisposable
 
     private readonly TimeWindowedCircuitBreaker _circuitBreaker = new(thresholdCount: 5, timeWindow: TimeSpan.FromSeconds(10), halfOpenTimeout: TimeSpan.FromSeconds(10));
 
+    private uint _displayIndex = 0;
+
     internal static bool ForceInitializeSuccess { get; set; }
 
-    public ScreenCaptureDxgi()
+    public ScreenCaptureDxgi(uint displayIndex = 0)
     {
+        _displayIndex = displayIndex;
         if (ForceInitializeSuccess)
         {
             _width = 1920;
             _height = 1080;
             return;
         }
-        Initialize();
+        Initialize(_displayIndex);
     }
 
     internal static bool? ForceSupported { get; set; }
@@ -282,8 +285,10 @@ internal sealed class ScreenCaptureDxgi : IDisposable
         return false;
     }
 
-    internal void Initialize()
+    internal void Initialize(uint? displayIndex = null)
     {
+        if (displayIndex.HasValue) _displayIndex = displayIndex.Value;
+
         lock (_lock)
         {
             ReleaseResources();
@@ -319,8 +324,13 @@ internal sealed class ScreenCaptureDxgi : IDisposable
                     var enumOutputs = Marshal.GetDelegateForFunctionPointer<EnumOutputsDelegate>(
                         GetVtableFunc(adapter, IDXGIAdapter_EnumOutputs_Index));
                     
-                    res = enumOutputs(adapter, 0, out IntPtr output);
-                    if (res != 0) throw new Exception("Failed to enumerate DXGI output 0.");
+                    res = enumOutputs(adapter, _displayIndex, out IntPtr output);
+                    if (res != 0 && _displayIndex != 0)
+                    {
+                        _displayIndex = 0;
+                        res = enumOutputs(adapter, 0, out output);
+                    }
+                    if (res != 0) throw new Exception($"Failed to enumerate DXGI output {_displayIndex}.");
 
                     try
                     {

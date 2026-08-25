@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Drawing;
+using System.Windows.Forms;
 using Pconnect.Agent.Services;
+using Pconnect.Agent.UI;
 
 namespace Pconnect.Agent;
 
@@ -10,20 +13,20 @@ internal sealed class DownloadBrowserForm : Form
     private string _currentPath = string.Empty;
 
     private readonly Panel _topPanel = new();
-    private readonly Button _btnBack = new();
+    private readonly ModernButton _btnBack = new();
     private readonly Label _lblBreadcrumb = new();
     private readonly ListView _listView = new();
-    private readonly Button _btnOpenFolder = new();
+    private readonly ModernButton _btnOpenFolder = new();
 
     public DownloadBrowserForm()
     {
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "Pconnect — Shared Files & Downloads";
-        Size = new Size(680, 480);
+        Size = new Size(700, 500);
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Color.FromArgb(24, 24, 28);
-        ForeColor = Color.White;
-        Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
+        BackColor = ThemeColors.Background;
+        ForeColor = ThemeColors.TextPrimary;
+        Font = ThemeColors.BodyFont;
 
         InitializeFormComponents();
         LoadDirectory(string.Empty);
@@ -32,23 +35,21 @@ internal sealed class DownloadBrowserForm : Form
     private void InitializeFormComponents()
     {
         _topPanel.Dock = DockStyle.Top;
-        _topPanel.Height = 44;
-        _topPanel.Padding = new Padding(8);
-        _topPanel.BackColor = Color.FromArgb(32, 32, 38);
+        _topPanel.Height = 48;
+        _topPanel.Padding = new Padding(10, 6, 10, 6);
+        _topPanel.BackColor = ThemeColors.Surface;
 
         _btnBack.Text = "← Back";
-        _btnBack.Width = 70;
-        _btnBack.Dock = DockStyle.Left;
-        _btnBack.FlatStyle = FlatStyle.Flat;
-        _btnBack.FlatAppearance.BorderSize = 0;
-        _btnBack.BackColor = Color.FromArgb(48, 48, 56);
-        _btnBack.ForeColor = Color.White;
+        _btnBack.Width = 85;
+        _btnBack.Height = 34;
+        _btnBack.Style = ModernButtonStyle.Secondary;
         _btnBack.Click += (_, _) => NavigateBack();
 
         _lblBreadcrumb.Dock = DockStyle.Fill;
         _lblBreadcrumb.TextAlign = ContentAlignment.MiddleLeft;
         _lblBreadcrumb.Padding = new Padding(12, 0, 0, 0);
-        _lblBreadcrumb.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        _lblBreadcrumb.Font = ThemeColors.BoldBodyFont;
+        _lblBreadcrumb.ForeColor = ThemeColors.TextPrimary;
 
         _topPanel.Controls.Add(_lblBreadcrumb);
         _topPanel.Controls.Add(_btnBack);
@@ -56,28 +57,34 @@ internal sealed class DownloadBrowserForm : Form
         _listView.Dock = DockStyle.Fill;
         _listView.View = View.Details;
         _listView.FullRowSelect = true;
-        _listView.BackColor = Color.FromArgb(24, 24, 28);
-        _listView.ForeColor = Color.White;
+        _listView.BackColor = ThemeColors.Background;
+        _listView.ForeColor = ThemeColors.TextPrimary;
         _listView.BorderStyle = BorderStyle.None;
 
-        _listView.Columns.Add("Name", 320);
-        _listView.Columns.Add("Type", 100);
-        _listView.Columns.Add("Size", 120);
+        _listView.Columns.Add("Name", 340);
+        _listView.Columns.Add("Type", 110);
+        _listView.Columns.Add("Size", 130);
 
         _listView.DoubleClick += OnItemDoubleClick;
 
-        _btnOpenFolder.Text = "Open in File Explorer";
-        _btnOpenFolder.Dock = DockStyle.Bottom;
-        _btnOpenFolder.Height = 40;
-        _btnOpenFolder.FlatStyle = FlatStyle.Flat;
-        _btnOpenFolder.FlatAppearance.BorderSize = 0;
-        _btnOpenFolder.BackColor = Color.FromArgb(40, 40, 48);
-        _btnOpenFolder.ForeColor = Color.White;
+        var bottomPanel = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 52,
+            Padding = new Padding(12, 8, 12, 8),
+            BackColor = ThemeColors.Surface,
+        };
+
+        _btnOpenFolder.Text = "Open Folder in File Explorer";
+        _btnOpenFolder.Dock = DockStyle.Fill;
+        _btnOpenFolder.Style = ModernButtonStyle.Primary;
         _btnOpenFolder.Click += (_, _) => OpenCurrentInExplorer();
+
+        bottomPanel.Controls.Add(_btnOpenFolder);
 
         Controls.Add(_listView);
         Controls.Add(_topPanel);
-        Controls.Add(_btnOpenFolder);
+        Controls.Add(bottomPanel);
     }
 
     private void LoadDirectory(string path)
@@ -100,7 +107,8 @@ internal sealed class DownloadBrowserForm : Form
 
                 var lvi = new ListViewItem(name)
                 {
-                    Tag = new { path = itemPath, isDir }
+                    Tag = new { path = itemPath, isDir },
+                    ForeColor = ThemeColors.TextPrimary,
                 };
 
                 lvi.SubItems.Add(isDir ? "Folder" : "File");
@@ -166,3 +174,4 @@ internal sealed class DownloadBrowserForm : Form
         return $"{(bytes / (1024.0 * 1024.0 * 1024.0)):F2} GB";
     }
 }
+

@@ -98,6 +98,7 @@ internal sealed class WebSocketHandler
         Thread? webRtcCaptureThread = null;
         CancellationTokenSource? webRtcCts = null;
         string? negotiatedScreenStream = null;
+        int currentDisplayIndex = 0;
         var inputDispatcher = new InputDispatcher(new KeyboardInjector());
 
         Action onInputBlocked = () =>
@@ -332,18 +333,20 @@ internal sealed class WebSocketHandler
 
                             _onDeviceAuthed?.Invoke(deviceId, deviceName);
                             _auditLog.Log(deviceName, "connected");
-                            var clientStreamModes = lastClientScreenStreamModes;
-                            var serverStreamModes = AdvertisedScreenStreamModes;
-                            var negotiatedStream = ScreenStreamNegotiation.Negotiate(clientStreamModes, serverStreamModes);
-                            await SendAsync(ws, new
-                            {
-                                v = 1, type = "helloAck",
-                                pcName = Environment.MachineName,
-                                role = deviceRole,
-                                capabilities = AdvertisedCapabilities,
-                                screenStreamModes = serverStreamModes,
-                                screenStream = negotiatedStream,
-                            }, ct);
+                             var clientStreamModes = lastClientScreenStreamModes;
+                             var serverStreamModes = AdvertisedScreenStreamModes;
+                             var negotiatedStream = ScreenStreamNegotiation.Negotiate(clientStreamModes, serverStreamModes);
+                             var currentMonitors = _pc.GetMonitors();
+                             await SendAsync(ws, new
+                             {
+                                 v = 1, type = "helloAck",
+                                 pcName = Environment.MachineName,
+                                 role = deviceRole,
+                                 capabilities = AdvertisedCapabilities,
+                                 screenStreamModes = serverStreamModes,
+                                 screenStream = negotiatedStream,
+                                 monitors = currentMonitors.Select(m => new { index = m.Index, name = m.Name, deviceIndex = m.DeviceIndex, x = m.X, y = m.Y, width = m.Width, height = m.Height, isPrimary = m.IsPrimary }).ToList(),
+                             }, ct);
                             negotiatedScreenStream = negotiatedStream;
                             await StartNotificationListenerAsync();
 
@@ -415,6 +418,7 @@ internal sealed class WebSocketHandler
                         var clientStreamModesPair = lastClientScreenStreamModes;
                         var serverStreamModesPair = AdvertisedScreenStreamModes;
                         var negotiatedStreamPair = ScreenStreamNegotiation.Negotiate(clientStreamModesPair, serverStreamModesPair);
+                        var pairedMonitors = _pc.GetMonitors();
                         await SendAsync(ws, new
                         {
                             v = 1, type = "helloAck",
@@ -423,6 +427,7 @@ internal sealed class WebSocketHandler
                             capabilities = AdvertisedCapabilities,
                             screenStreamModes = serverStreamModesPair,
                             screenStream = negotiatedStreamPair,
+                            monitors = pairedMonitors.Select(m => new { index = m.Index, name = m.Name, deviceIndex = m.DeviceIndex, x = m.X, y = m.Y, width = m.Width, height = m.Height, isPrimary = m.IsPrimary }).ToList(),
                         }, ct);
                         negotiatedScreenStream = negotiatedStreamPair;
                         await StartNotificationListenerAsync();
@@ -587,9 +592,10 @@ internal sealed class WebSocketHandler
                         if (!RequireAdmin()) break;
                         var rx = msg.GetDoubleOrDefault("xRatio", -1.0);
                         var ry = msg.GetDoubleOrDefault("yRatio", -1.0);
+                        var mDispIdx = msg.GetIntOrDefault("displayIndex", currentDisplayIndex);
                         if (rx >= 0 && ry >= 0)
                         {
-                            _pc.MoveMouseNormalized(rx, ry);
+                            _pc.MoveMouseNormalized(rx, ry, mDispIdx);
                         }
                         else
                         {
@@ -613,9 +619,10 @@ internal sealed class WebSocketHandler
                         }
                         var mbRx = msg.GetDoubleOrDefault("xRatio", -1.0);
                         var mbRy = msg.GetDoubleOrDefault("yRatio", -1.0);
+                        var mbDispIdx = msg.GetIntOrDefault("displayIndex", currentDisplayIndex);
                         if (mbRx >= 0 && mbRy >= 0 && act.Trim().ToLowerInvariant() == "click")
                         {
-                            _pc.MoveAndClickNormalized(mbRx, mbRy, btn);
+                            _pc.MoveAndClickNormalized(mbRx, mbRy, btn, mbDispIdx);
                         }
                         else
                         {
@@ -985,6 +992,8 @@ internal sealed class WebSocketHandler
 
                         var clientWidth = msg.GetIntOrDefault("width", 720);
                         var clientQuality = msg.GetIntOrDefault("quality", 65);
+                        var offerDisplayIndex = msg.GetIntOrDefault("displayIndex", currentDisplayIndex);
+                        currentDisplayIndex = offerDisplayIndex;
 
                         try
                         {
@@ -993,7 +1002,7 @@ internal sealed class WebSocketHandler
                             webRtcCts = new CancellationTokenSource();
                             var localCts = webRtcCts;
 
-                            dxgiCapture = new ScreenCaptureDxgi();
+                            dxgiCapture = new ScreenCaptureDxgi((uint)Math.Max(0, offerDisplayIndex));
                             
                             int targetWidth = (int)dxgiCapture.Width;
                             int targetHeight = (int)dxgiCapture.Height;
@@ -1312,6 +1321,16 @@ internal sealed class WebSocketHandler
                         }
                         break;
 
+                    case "getmonitors":
+                        if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
+                        var monitorList = _pc.GetMonitors();
+                        await SendAsync(ws, new
+                        {
+                            v = 1, type = "monitorsList",
+                            monitors = monitorList.Select(m => new { index = m.Index, name = m.Name, deviceIndex = m.DeviceIndex, x = m.X, y = m.Y, width = m.Width, height = m.Height, isPrimary = m.IsPrimary }).ToList()
+                        }, ct);
+                        break;
+
                     // ── New: Screen capture ──
                     case "screencapturestart":
                         if (!RequireAdmin()) { await SendRoleError(ws, ct); break; }
@@ -1324,6 +1343,8 @@ internal sealed class WebSocketHandler
                         var interval = msg.GetIntOrDefault("intervalMs", 1000);
                         var captureWidth = msg.GetIntOrDefault("width", 720);
                         var captureQuality = msg.GetIntOrDefault("quality", 65);
+                        var capDisplayIndex = msg.GetIntOrDefault("displayIndex", currentDisplayIndex);
+                        currentDisplayIndex = capDisplayIndex;
                         if (negotiatedScreenStream == ScreenStreamNegotiation.JpegBinV1)
                         {
                             screenCapture = new ScreenCaptureService((byte[] raw, int w, int h) =>
@@ -1338,6 +1359,7 @@ internal sealed class WebSocketHandler
                                 _ = SendScreenFrameAsync(ws, b64, w, h, ct);
                             });
                         }
+                        screenCapture.DisplayIndex = capDisplayIndex;
                         screenCapture.Start(interval, captureWidth, captureQuality);
                         _auditLog.Log(deviceName, "screenCaptureStart");
                         await SendAsync(ws, new { v = 1, type = "ok" }, ct);

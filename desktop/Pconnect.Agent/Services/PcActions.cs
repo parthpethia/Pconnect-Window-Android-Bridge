@@ -115,6 +115,40 @@ internal sealed class PcActions
         Process.Start(psi);
     }
 
+    public record DisplayInfo(
+        int Index,
+        string Name,
+        int DeviceIndex,
+        int X,
+        int Y,
+        int Width,
+        int Height,
+        bool IsPrimary
+    );
+
+    public IReadOnlyList<DisplayInfo> GetMonitors()
+    {
+        var screens = Screen.AllScreens;
+        var list = new List<DisplayInfo>();
+        for (int i = 0; i < screens.Length; i++)
+        {
+            var s = screens[i];
+            string name = string.IsNullOrWhiteSpace(s.DeviceName) ? $"Display {i + 1}" : s.DeviceName.Replace(@"\.\", "").Replace(@"\", "");
+            if (s.Primary) name += " (Primary)";
+            list.Add(new DisplayInfo(
+                Index: i,
+                Name: name,
+                DeviceIndex: i,
+                X: s.Bounds.X,
+                Y: s.Bounds.Y,
+                Width: s.Bounds.Width,
+                Height: s.Bounds.Height,
+                IsPrimary: s.Primary
+            ));
+        }
+        return list;
+    }
+
     public void MouseMove(int dx, int dy)
     {
         _keyboard.MoveMouseBy(dx, dy);
@@ -125,14 +159,14 @@ internal sealed class PcActions
         _keyboard.MoveMouseTo(x, y);
     }
 
-    public void MoveMouseNormalized(double rx, double ry)
+    public void MoveMouseNormalized(double rx, double ry, int displayIndex = 0)
     {
-        _keyboard.MoveMouseNormalized(rx, ry);
+        _keyboard.MoveMouseNormalized(rx, ry, displayIndex);
     }
 
-    public void MoveAndClickNormalized(double rx, double ry, string button = "left")
+    public void MoveAndClickNormalized(double rx, double ry, string button = "left", int displayIndex = 0)
     {
-        _keyboard.MoveAndClickNormalized(rx, ry, button);
+        _keyboard.MoveAndClickNormalized(rx, ry, button, displayIndex);
     }
 
     public void MouseScroll(int wheelDelta)

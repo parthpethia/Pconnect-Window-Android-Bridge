@@ -37,6 +37,8 @@ internal sealed class DashboardForm : Form
     private ModernProgressBar? _pinCountdownBar;
     private PictureBox? _qrPictureBox;
     private Label? _qrUrlLabel;
+    private FlowLayoutPanel? _pairingIpChipsPanel;
+    private string? _pairingSelectedIp;
 
     // System Metrics Tab Controls
     private Panel? _metricsPage;
@@ -560,7 +562,7 @@ internal sealed class DashboardForm : Form
             Top = 8,
             Left = 0,
             Width = cardWidth,
-            Height = 370,
+            Height = 400,
             Title = "Device Pairing & QR Code",
             Subtitle = "Scan with Pconnect Mobile App or enter the rotating 6-digit Security PIN code.",
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
@@ -590,9 +592,29 @@ internal sealed class DashboardForm : Form
         {
             Left = 25,
             Top = 140,
-            Width = 330,
+            Width = 370,
             Label = "PIN Rotation Countdown",
             Value = 100,
+        };
+
+        var selectIpTitle = new Label
+        {
+            Text = "Active Connection IP:",
+            Font = ThemeColors.SmallFont,
+            ForeColor = ThemeColors.TextSecondary,
+            Left = 25,
+            Top = 195,
+            AutoSize = true,
+        };
+
+        _pairingIpChipsPanel = new FlowLayoutPanel
+        {
+            Left = 25,
+            Top = 215,
+            Width = 370,
+            Height = 34,
+            WrapContents = false,
+            AutoScroll = true,
         };
 
         _qrUrlLabel = new Label
@@ -601,19 +623,19 @@ internal sealed class DashboardForm : Form
             Font = ThemeColors.BodyFont,
             ForeColor = ThemeColors.TextSecondary,
             Left = 25,
-            Top = 188,
-            MaximumSize = new Size(400, 0),
+            Top = 255,
+            MaximumSize = new Size(390, 0),
             AutoSize = true,
         };
 
         _qrPictureBox = new PictureBox
         {
-            Left = cardWidth - 255,
+            Left = cardWidth - 265,
             Top = 55,
-            Width = 230,
-            Height = 230,
+            Width = 240,
+            Height = 240,
             SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Color.White,
+            BackColor = ThemeColors.Surface,
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
 
@@ -622,8 +644,8 @@ internal sealed class DashboardForm : Form
             Text = "Copy WebSocket URL",
             Style = ModernButtonStyle.Primary,
             Left = 25,
-            Top = 235,
-            Width = 170,
+            Top = 300,
+            Width = 175,
             Height = 38,
         };
         copyUrlBtn.Click += (_, _) => CopyWebSocketUrl();
@@ -632,9 +654,9 @@ internal sealed class DashboardForm : Form
         {
             Text = "Copy PIN",
             Style = ModernButtonStyle.Secondary,
-            Left = 205,
-            Top = 235,
-            Width = 100,
+            Left = 210,
+            Top = 300,
+            Width = 95,
             Height = 38,
         };
         copyPinBtn.Click += (_, _) =>
@@ -648,8 +670,8 @@ internal sealed class DashboardForm : Form
             Text = "Regen PIN",
             Style = ModernButtonStyle.Outline,
             Left = 315,
-            Top = 235,
-            Width = 110,
+            Top = 300,
+            Width = 100,
             Height = 38,
         };
         regenPinBtn.Click += (_, _) =>
@@ -661,6 +683,8 @@ internal sealed class DashboardForm : Form
         qrCard.Controls.Add(pinTitle);
         qrCard.Controls.Add(_pinCodeLabel);
         qrCard.Controls.Add(_pinCountdownBar);
+        qrCard.Controls.Add(selectIpTitle);
+        qrCard.Controls.Add(_pairingIpChipsPanel);
         qrCard.Controls.Add(_qrUrlLabel);
         qrCard.Controls.Add(_qrPictureBox);
         qrCard.Controls.Add(copyUrlBtn);
@@ -670,11 +694,58 @@ internal sealed class DashboardForm : Form
         _pairingPage.Controls.Add(qrCard);
     }
 
+    private void PopulatePairingIpChips()
+    {
+        if (_pairingIpChipsPanel == null) return;
+        _pairingIpChipsPanel.Controls.Clear();
+        var ips = _runtime.GetLanIpv4Candidates();
+        if (ips.Count == 0) return;
+
+        if (string.IsNullOrEmpty(_pairingSelectedIp) || !ips.Contains(_pairingSelectedIp))
+        {
+            _pairingSelectedIp = ips[0];
+        }
+
+        foreach (var ip in ips)
+        {
+            bool isSelected = string.Equals(ip, _pairingSelectedIp, StringComparison.Ordinal);
+            var chip = new ModernButton
+            {
+                Text = ip,
+                Style = isSelected ? ModernButtonStyle.Primary : ModernButtonStyle.Secondary,
+                Height = 26,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 6, 0),
+            };
+            var targetIp = ip;
+            chip.Click += (_, _) =>
+            {
+                _pairingSelectedIp = targetIp;
+                PopulatePairingIpChips();
+                RefreshPairingCode();
+            };
+            _pairingIpChipsPanel.Controls.Add(chip);
+        }
+    }
+
     private void RefreshPairingCode()
     {
         var code = _runtime.Pairing.CurrentCode;
         if (_pinCodeLabel != null) _pinCodeLabel.Text = code;
-        if (_qrUrlLabel != null) _qrUrlLabel.Text = $"WebSocket URL: {_runtime.GetLikelyWebSocketUrl() ?? "Unavailable"}";
+
+        PopulatePairingIpChips();
+
+        var ips = _runtime.GetLanIpv4Candidates();
+        var activeIp = (ips.Count > 0 && !string.IsNullOrEmpty(_pairingSelectedIp) && ips.Contains(_pairingSelectedIp))
+            ? _pairingSelectedIp
+            : (ips.Count > 0 ? ips[0] : null);
+
+        if (_qrUrlLabel != null)
+        {
+            _qrUrlLabel.Text = activeIp != null
+                ? $"WebSocket URL: ws://{activeIp}:{AgentRuntime.DefaultWsPort}/ws"
+                : "WebSocket URL: Unavailable (No LAN IPv4)";
+        }
 
         if (_pinCountdownBar != null)
         {
@@ -689,36 +760,31 @@ internal sealed class DashboardForm : Form
         {
             try
             {
-                var url = _runtime.GetLikelyWebSocketUrl();
-                if (url == null)
+                if (!_runtime.IsServerRunning)
                 {
-                    _qrPictureBox.Image?.Dispose();
-                    _qrPictureBox.Image = null;
+                    var oldImg = _qrPictureBox.Image;
+                    _qrPictureBox.Image = QrCodeHelper.GenerateFallbackImage("Server Stopped", "Click 'Start Server' on Overview tab", 240);
+                    oldImg?.Dispose();
                     return;
                 }
 
-                var uri = new Uri(url);
-                var qrData = JsonSerializer.Serialize(new
+                if (activeIp == null)
                 {
-                    ip = uri.Host,
-                    port = uri.Port,
-                    wssPort = AgentRuntime.DefaultWssPort,
-                    pairingCode = code,
-                });
+                    var oldImg = _qrPictureBox.Image;
+                    _qrPictureBox.Image = QrCodeHelper.GenerateFallbackImage("No LAN IPv4", "Connect PC to Wi-Fi or Ethernet network", 240);
+                    oldImg?.Dispose();
+                    return;
+                }
 
-                using var qrGenerator = new QRCodeGenerator();
-                using var qrCodeData = qrGenerator.CreateQrCode(qrData, QRCodeGenerator.ECCLevel.M);
-                using var qrCode = new PngByteQRCode(qrCodeData);
-                var pngBytes = qrCode.GetGraphic(5);
-
-                using var ms = new MemoryStream(pngBytes);
                 var oldImage = _qrPictureBox.Image;
-                _qrPictureBox.Image = Image.FromStream(ms);
+                _qrPictureBox.Image = QrCodeHelper.GenerateQrImage(activeIp, AgentRuntime.DefaultWsPort, AgentRuntime.DefaultWssPort, code, 240);
                 oldImage?.Dispose();
             }
             catch
             {
-                // QR generation fallback
+                var oldImg = _qrPictureBox.Image;
+                _qrPictureBox.Image = QrCodeHelper.GenerateFallbackImage("QR Render Error", "Use manual IP entry on phone app", 240);
+                oldImg?.Dispose();
             }
         }
     }
@@ -786,13 +852,18 @@ internal sealed class DashboardForm : Form
 
     private void CopyWebSocketUrl()
     {
-        var url = _runtime.GetLikelyWebSocketUrl();
-        if (url == null)
+        var ips = _runtime.GetLanIpv4Candidates();
+        var activeIp = (ips.Count > 0 && !string.IsNullOrEmpty(_pairingSelectedIp) && ips.Contains(_pairingSelectedIp))
+            ? _pairingSelectedIp
+            : _runtime.GetLikelyWebSocketUrl();
+
+        if (string.IsNullOrEmpty(activeIp))
         {
             MessageBox.Show("Could not determine an IP address.", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
+        var url = activeIp.StartsWith("ws://", StringComparison.Ordinal) ? activeIp : $"ws://{activeIp}:{AgentRuntime.DefaultWsPort}/ws";
         Clipboard.SetText(url);
         MessageBox.Show($"Copied to clipboard:\n{url}", "Pconnect", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }

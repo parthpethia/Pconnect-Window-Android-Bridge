@@ -145,24 +145,45 @@ internal class KeyboardInjector
         SetCursorPos(x, y);
     }
 
-    public virtual void MoveMouseNormalized(double rx, double ry)
+    private static System.Drawing.Rectangle GetTargetBounds(int displayIndex)
     {
+        var screens = System.Windows.Forms.Screen.AllScreens;
+        if (displayIndex >= 0 && displayIndex < screens.Length)
+        {
+            return screens[displayIndex].Bounds;
+        }
+        if (displayIndex == -1)
+        {
+            return System.Windows.Forms.SystemInformation.VirtualScreen;
+        }
+        return System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
+    }
+
+    private static (double vrx, double vry, int targetX, int targetY) MapToVirtualDesk(double rx, double ry, int displayIndex)
+    {
+        var bounds = GetTargetBounds(displayIndex);
+        int targetX = bounds.X + (int)Math.Round(rx * bounds.Width);
+        int targetY = bounds.Y + (int)Math.Round(ry * bounds.Height);
+
+        var vs = System.Windows.Forms.SystemInformation.VirtualScreen;
+        double vrx = (double)(targetX - vs.X) / Math.Max(1, vs.Width);
+        double vry = (double)(targetY - vs.Y) / Math.Max(1, vs.Height);
+
+        return (vrx, vry, targetX, targetY);
+    }
+
+    public virtual void MoveMouseNormalized(double rx, double ry, int displayIndex = 0)
+    {
+        var (vrx, vry, x, y) = MapToVirtualDesk(rx, ry, displayIndex);
         var inputs = new[]
         {
-            MouseAbsolute(rx, ry, 0),
+            MouseAbsolute(vrx, vry, 0),
         };
         SendInputInternal(inputs);
-
-        int sw = GetSystemMetrics(0); // SM_CXSCREEN
-        int sh = GetSystemMetrics(1); // SM_CYSCREEN
-        if (sw <= 0) sw = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-        if (sh <= 0) sh = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Height ?? 1080;
-        int x = (int)Math.Round(rx * sw);
-        int y = (int)Math.Round(ry * sh);
         SetCursorPos(x, y);
     }
 
-    public virtual void MoveAndClickNormalized(double rx, double ry, string button = "left")
+    public virtual void MoveAndClickNormalized(double rx, double ry, string button = "left", int displayIndex = 0)
     {
         button = (button ?? "left").Trim().ToLowerInvariant();
         uint downFlag = MOUSEEVENTF_LEFTDOWN;
@@ -178,25 +199,20 @@ internal class KeyboardInjector
             upFlag = MOUSEEVENTF_MIDDLEUP;
         }
 
-        int sw = GetSystemMetrics(0);
-        int sh = GetSystemMetrics(1);
-        if (sw <= 0) sw = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-        if (sh <= 0) sh = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Height ?? 1080;
-        int x = (int)Math.Round(rx * sw);
-        int y = (int)Math.Round(ry * sh);
+        var (vrx, vry, x, y) = MapToVirtualDesk(rx, ry, displayIndex);
         SetCursorPos(x, y);
 
         SendInputInternal(new[]
         {
-            MouseAbsolute(rx, ry, 0),
-            MouseAbsolute(rx, ry, downFlag),
+            MouseAbsolute(vrx, vry, 0),
+            MouseAbsolute(vrx, vry, downFlag),
         });
 
         Thread.Sleep(15);
 
         SendInputInternal(new[]
         {
-            MouseAbsolute(rx, ry, upFlag),
+            MouseAbsolute(vrx, vry, upFlag),
         });
     }
 
